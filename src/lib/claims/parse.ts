@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { AppConfig } from "../config";
 import { callGemini } from "../extraction/gemini";
 import { normText } from "../extraction/grounding";
+import { findInjections, quoteFromInjection } from "../forensics/injection";
 import type { ClaimStated, ClaimType, ModelUsage } from "../types";
 
 export const MAX_LISTING_CHARS = 4000;
@@ -82,6 +83,9 @@ const RULES: { type: ClaimType; re: RegExp; build: (m: RegExpMatchArray) => Clai
 ];
 
 export function parseClaimsWithRules(text: string): ClaimProposal[] {
+  // Sentences addressed to AI are not seller claims.
+  const injections = findInjections(text);
+  for (const line of injections) text = text.replace(line, " ");
   const out: ClaimProposal[] = [];
   for (const rule of RULES) {
     if (out.some((p) => p.type === rule.type)) continue;
@@ -150,9 +154,14 @@ export function validateModelClaims(input: string, json: unknown): { proposals: 
   const parsed = modelOutput.safeParse(json);
   if (!parsed.success) throw new Error("The model output did not match the claim schema.");
   const hay = normText(input);
+  const injections = findInjections(input);
   const proposals: ClaimProposal[] = [];
   const dropped: string[] = [];
   for (const c of parsed.data.claims) {
+    if (quoteFromInjection(c.sourceText, injections)) {
+      dropped.push(`${c.type}: comes from text addressed to AI systems`);
+      continue;
+    }
     if (proposals.some((p) => p.type === c.type)) {
       dropped.push(`${c.type}: duplicate`);
       continue;

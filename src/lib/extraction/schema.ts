@@ -43,6 +43,7 @@ export const rawExtractionSchema = z.object({
   // Added after the first schema; optional so a model omitting them does not fail the whole document.
   damageRepair: strField.optional(),
   dcChargingSharePercent: numField.optional(),
+  registrationNumber: strField.optional(),
 });
 
 export type RawExtraction = z.infer<typeof rawExtractionSchema>;
@@ -61,6 +62,7 @@ const FIELD_ORDER: FieldName[] = [
   "batteryTestProvider",
   "damageRepair",
   "dcChargingSharePercent",
+  "registrationNumber",
 ];
 
 // ---- Gemini response schema (OpenAPI subset) ------------------------------
@@ -117,6 +119,7 @@ export const geminiResponseSchema: Schema = {
       { type: Type.NUMBER, nullable: true, description: "Share of charging energy or sessions from DC fast charging, in percent, only if the document states it. Never compute it." },
       "DC fast-charging share",
     ),
+    registrationNumber: cited(str("Vehicle registration (licence plate) number exactly as printed."), "Registration number"),
   },
   required: FIELD_ORDER,
   propertyOrdering: FIELD_ORDER,

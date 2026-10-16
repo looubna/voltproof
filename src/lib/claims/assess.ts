@@ -15,7 +15,7 @@ import { daysBetween, formatOdometer, normalizeVin, parseIsoDate, toKm, vinTail 
 import { docLabel, docTypeOf, documentIntegrityIssue, isBatteryReport, readDocs, readingDate, ref, usable, type RuleInput } from "../rules";
 import type { CaseDocument, Claim, ClaimAssessmentInfo, DocumentType, EvidenceRef, FieldName, Finding, Odometer, Provenance, Status } from "../types";
 
-export const ASSESSOR_VERSION = "2026.10.3";
+export const ASSESSOR_VERSION = "2026.10.4";
 
 export interface ClaimPolicy {
   sohTolerancePts: number;

@@ -3,6 +3,8 @@ import { agentMayCall, isAgentRequest } from "./lib/agent-auth";
 import { SESSION_COOKIE, verifySessionToken } from "./lib/session";
 
 export async function middleware(req: NextRequest) {
+  // The landing page is public.
+  if (req.nextUrl.pathname === "/") return NextResponse.next();
   const session = await verifySessionToken(req.cookies.get(SESSION_COOKIE)?.value);
   if (session) return NextResponse.next();
   // The ADK agent: only its allowlisted API routes, nothing else.

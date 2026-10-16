@@ -296,6 +296,10 @@ async function addInkMarkCheck(forensics: DocumentForensics, buf: Buffer, mimeTy
   }
 }
 
+function ocrText(ocr: OcrResult | null | undefined) {
+  return ocr ? ocr.pages.flatMap((p) => p.lines.map((l) => l.text)).join("\n") : undefined;
+}
+
 /** Saves forensic images next to the original file and records where. */
 async function storeArtifacts(forensics: DocumentForensics, artifacts: ForensicArtifacts, storageKey: string) {
   if (!artifacts.heatmap) return;
@@ -324,7 +328,7 @@ async function extractLive(buf: Buffer, mimeType: string, filename: string): Pro
     const r = await extractWithGemini(buf, mimeType, cfg, model);
     const g = await groundExtraction(r.fields, buf, mimeType);
     notes.set(model, (await secondRead(buf, mimeType, filename, r.fields, g.grounding, ocrCache)) ?? "");
-    const fx = await analyzeDocument(buf, mimeType, r.fields, artifactsByModel.get(model) ?? artifactsByModel.set(model, {}).get(model)!);
+    const fx = await analyzeDocument(buf, mimeType, r.fields, artifactsByModel.get(model) ?? artifactsByModel.set(model, {}).get(model)!, ocrText(ocrCache.ocr));
     if (!forensicsByModel.size) await addInkMarkCheck(fx, buf, mimeType, filename);
     forensicsByModel.set(model, fx);
     log({ step: "extract", model, latencyMs: r.usage.latencyMs, attempts: r.usage.attempts, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens, grounding: g.grounding, quotesNotFound: g.notFound });
@@ -389,9 +393,10 @@ export async function processDocument(caseId: string, docId: string, actor: stri
       if (sample) {
         const { fields, warnings } = fixtureExtraction(sample, cfg.minConfidence);
         const g = await groundExtraction(fields, buf, doc0.mimeType);
-        const ocrNote = await secondRead(buf, doc0.mimeType, doc0.filename, fields, g.grounding, {});
+        const demoOcr: { ocr?: OcrResult | null } = {};
+        const ocrNote = await secondRead(buf, doc0.mimeType, doc0.filename, fields, g.grounding, demoOcr);
         const artifacts: ForensicArtifacts = {};
-        forensics = await analyzeDocument(buf, doc0.mimeType, fields, artifacts);
+        forensics = await analyzeDocument(buf, doc0.mimeType, fields, artifacts, ocrText(demoOcr.ocr));
         await storeArtifacts(forensics, artifacts, doc0.storageKey);
         await addInkMarkCheck(forensics, buf, doc0.mimeType, doc0.filename);
         extraction = { mode: "demo-fixture", model: null, extractedAt: now(), fields, warnings, grounding: g.grounding };

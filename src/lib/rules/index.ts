@@ -32,7 +32,7 @@ import type {
   Vehicle,
 } from "../types";
 
-export const RULES_VERSION = "2026.10.2";
+export const RULES_VERSION = "2026.10.3";
 
 export interface RuleInput {
   vehicle: Vehicle;
@@ -647,6 +647,43 @@ export function vinStructure(input: RuleInput): Finding {
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// Rule 8 — registration number consistency
+
+export function registrationConsistency(input: RuleInput): Finding {
+  const evidence: EvidenceRef[] = [];
+  const plates: { plate: string; doc: CaseDocument }[] = [];
+  for (const doc of readDocs(input.documents)) {
+    const u = usable(doc, "registrationNumber");
+    if (u.state === "absent") continue;
+    evidence.push(ref(doc, "registrationNumber", u.state === "excluded" ? `Not used: ${u.reason}` : undefined));
+    if (u.state === "ok") plates.push({ plate: String(u.value).toUpperCase().replace(/[\s-]/g, ""), doc });
+  }
+  const base = {
+    id: "registration-consistency",
+    ruleId: "registration_consistency",
+    category: "vehicle_identity" as const,
+    title: "Registration number",
+    checked: "Whether every document that shows a registration (plate) number shows the same one.",
+    evidence,
+    whyItMatters: "Registries are searched by plate as well as VIN. A different plate on one document suggests it belongs to another vehicle or was changed.",
+  };
+  if (!plates.length) return { ...base, status: "unknown", result: "No document shows a readable registration number.", nextAction: null, decisionImpact: false, requiresReview: false };
+  const distinct = Array.from(new Set(plates.map((p) => p.plate)));
+  if (distinct.length > 1) {
+    return { ...base, status: "conflict", result: `Documents show different registration numbers: ${plates.map((p) => `${p.plate} on ${docLabel(p.doc)}`).join("; ")}.`, nextAction: "Check the plate on the vehicle and ask the seller to explain the different number.", decisionImpact: true, requiresReview: true };
+  }
+  return {
+    ...base,
+    status: plates.length > 1 ? "consistent" : "unknown",
+    result: plates.length > 1 ? `${plural(plates.length, "document")} show the same registration number (${distinct[0]}). This shows the documents agree; it does not confirm the registration.` : `Only ${docLabel(plates[0].doc)} shows a registration number (${distinct[0]}); nothing to compare it with.`,
+    nextAction: null,
+    decisionImpact: false,
+    requiresReview: false,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Evidence summaries (derived from the rules above, not new checks)
 
@@ -922,6 +959,7 @@ export function runRules(input: RuleInput, opts: RuleOptions): Finding[] {
   return [
     vin,
     vinStructure(input),
+    registrationConsistency(input),
     vehicle,
     mileage,
     currentOdometer(input),

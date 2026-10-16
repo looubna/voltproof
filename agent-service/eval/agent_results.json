@@ -1,0 +1,106 @@
+[
+  {
+    "case": "demo-hero-id3",
+    "seconds": 48.9,
+    "flaggedDocuments": 1,
+    "forensicReports": 1,
+    "steps": 12,
+    "geminiCalls": 4,
+    "drafts": {
+      "reviewerSummary": 3,
+      "sellerQuestions": 3,
+      "issuerRequests": 1
+    },
+    "droppedByValidation": 0,
+    "checks": {
+      "run stored": true,
+      "both registry lookups ran": true,
+      "forensic analyst ran iff documents flagged": true,
+      "every flagged document explained": true,
+      "explanations cite only raised indicators": true,
+      "every draft cites findings": true,
+      "no verdict words": true,
+      "tool calls \u2264 8": true,
+      "finished in < 150 s": true
+    },
+    "error": null
+  },
+  {
+    "case": "demo-tampered-kona",
+    "seconds": 44.4,
+    "flaggedDocuments": 3,
+    "forensicReports": 3,
+    "steps": 11,
+    "geminiCalls": 5,
+    "drafts": {
+      "reviewerSummary": 3,
+      "sellerQuestions": 5,
+      "issuerRequests": 2
+    },
+    "droppedByValidation": 0,
+    "checks": {
+      "run stored": true,
+      "both registry lookups ran": true,
+      "forensic analyst ran iff documents flagged": true,
+      "every flagged document explained": true,
+      "explanations cite only raised indicators": true,
+      "every draft cites findings": true,
+      "no verdict words": true,
+      "tool calls \u2264 8": true,
+      "finished in < 150 s": true
+    },
+    "error": null
+  },
+  {
+    "case": "demo-tesla-model3",
+    "seconds": 110.1,
+    "flaggedDocuments": 0,
+    "forensicReports": 0,
+    "steps": 15,
+    "geminiCalls": 4,
+    "drafts": {
+      "reviewerSummary": 3,
+      "sellerQuestions": 4,
+      "issuerRequests": 1
+    },
+    "droppedByValidation": 0,
+    "checks": {
+      "run stored": true,
+      "both registry lookups ran": true,
+      "forensic analyst ran iff documents flagged": true,
+      "every flagged document explained": true,
+      "explanations cite only raised indicators": true,
+      "every draft cites findings": true,
+      "no verdict words": true,
+      "tool calls \u2264 8": true,
+      "finished in < 150 s": true
+    },
+    "error": null
+  },
+  {
+    "case": "demo-kia-ev6",
+    "seconds": 13.6,
+    "flaggedDocuments": 0,
+    "forensicReports": 0,
+    "steps": 9,
+    "geminiCalls": 2,
+    "drafts": {
+      "reviewerSummary": 2,
+      "sellerQuestions": 2,
+      "issuerRequests": 1
+    },
+    "droppedByValidation": 0,
+    "checks": {
+      "run stored": true,
+      "both registry lookups ran": true,
+      "forensic analyst ran iff documents flagged": true,
+      "every flagged document explained": true,
+      "explanations cite only raised indicators": true,
+      "every draft cites findings": true,
+      "no verdict words": true,
+      "tool calls \u2264 8": true,
+      "finished in < 150 s": true
+    },
+    "error": null
+  }
+]

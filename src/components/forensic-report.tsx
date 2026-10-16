@@ -17,6 +17,7 @@ const CODE_LABEL: Record<string, string> = {
   changed_after_signing: "Content added after signing",
   jpeg_ghost_mismatch: "Photo area without the photo's compression history",
   duplicated_mark: "Stamp or signature copied digitally",
+  instructions_to_ai: "Hidden instructions to AI systems",
 };
 
 /** Gemini's explanation of one flagged document, with the visual evidence next to it. */

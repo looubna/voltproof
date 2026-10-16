@@ -218,3 +218,15 @@ describe("Current odometer and statuses", () => {
     for (const f of all) expect(JSON.stringify(f)).not.toMatch(/fraudulent/i);
   });
 });
+
+describe("registration number", () => {
+  it("is consistent when documents agree and a conflict when they differ", async () => {
+    const { registrationConsistency } = await import("@/lib/rules");
+    const a = makeDoc("a", { registrationNumber: "61 VW 2071" });
+    const b = makeDoc("b", { registrationNumber: "61VW-2071" });
+    const c = makeDoc("c", { registrationNumber: "12 AB 3456" });
+    expect(registrationConsistency({ vehicle, documents: [a, b], referenceDate: REF }).status).toBe("consistent");
+    expect(registrationConsistency({ vehicle, documents: [a, b, c], referenceDate: REF }).status).toBe("conflict");
+    expect(registrationConsistency({ vehicle, documents: [], referenceDate: REF }).status).toBe("unknown");
+  });
+});

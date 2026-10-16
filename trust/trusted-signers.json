@@ -3,7 +3,7 @@
   "signers": [
     {
       "name": "Synthetic Cell Diagnostics Ltd",
-      "sha256": "781fff0b73fe6157f88efb792791a59ae6abce25a125ffda24fade4013aa9dd3",
+      "sha256": "8352b34145866960d974037081625f98aa46b489c1d9acb770700932e78f80b5",
       "note": "Synthetic demo certificate"
     }
   ]

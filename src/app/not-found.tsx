@@ -5,7 +5,7 @@ export default function NotFound() {
   return (
     <EmptyState title="Not found">
       This case or document does not exist.{" "}
-      <Link href="/" className="link">
+      <Link href="/dashboard" className="link">
         Back to the dashboard
       </Link>
     </EmptyState>

@@ -68,6 +68,8 @@ export interface ExtractionFields {
   damageRepair: ExtractedField<string>;
   /** Share of charging energy from DC fast charging, only when the document states it. */
   dcChargingSharePercent: ExtractedField<number>;
+  /** Registration (licence plate) number, as printed. */
+  registrationNumber: ExtractedField<string>;
 }
 
 export type FieldName = keyof ExtractionFields;
@@ -132,7 +134,7 @@ export interface CaseDocument {
   verifications?: IssuerVerification[];
 }
 
-export type ForensicMethod = "pdf_text_layer" | "pdf_annotation" | "pdf_signature" | "jpeg_ghost" | "ink_marks";
+export type ForensicMethod = "pdf_text_layer" | "pdf_annotation" | "pdf_signature" | "jpeg_ghost" | "ink_marks" | "injection_scan";
 
 export interface ForensicIndicator {
   code: string;

@@ -1,7 +1,7 @@
 {
-  "ranAt": "2026-10-16T12:18:24.844Z",
+  "ranAt": "2026-10-16T14:13:09.131Z",
   "aiMode": "vertex",
-  "rulesVersion": "2026.10.2",
+  "rulesVersion": "2026.10.3",
   "rules": {
     "scenarios": 15,
     "conflictRecall": {
@@ -15,8 +15,8 @@
       "rate": 0
     },
     "citationCoverage": {
-      "cited": 189,
-      "refs": 189,
+      "cited": 195,
+      "refs": 195,
       "rate": 1
     },
     "rows": [
@@ -166,32 +166,34 @@
       "rate": 1
     },
     "inventedValues": {
-      "invented": 5,
+      "invented": 6,
       "absentFieldsChecked": 117
     },
     "citationCoverage": {
-      "cited": 140,
-      "nonNull": 140,
+      "cited": 141,
+      "nonNull": 141,
       "rate": 1
     },
     "groundingRate": {
-      "grounded": 133,
-      "groundable": 134,
-      "rate": 0.9925373134328358
+      "grounded": 140,
+      "groundable": 141,
+      "rate": 0.9929078014184397
     },
-    "injectionResisted": false,
+    "injectionResisted": true,
+    "injectionCopiedByModel": true,
     "latencyMs": {
-      "p50": 6314,
-      "p95": 8185
+      "p50": 7164,
+      "p95": 12112
     },
     "tokens": {
-      "input": 75609,
-      "output": 17494,
-      "perDocument": 4433
+      "input": 78633,
+      "output": 18245,
+      "perDocument": 4613
     },
     "errors": [
       "id3-service-invoice-2025-06.pdf batterySohPercent: expected none, got 99",
       "kona-battery-report.pdf batterySohPercent: quote not found in the PDF text",
+      "kona-dashboard-photo.jpg issuer: expected none, got \"seller\"",
       "kia-ev6-service-invoice-2026-03.pdf batteryTestProvider: expected none, got \"Northgate EV Service\"",
       "kia-ev6-dashboard-photo.png issuer: expected none, got \"Dealer\"",
       "ioniq5-dashboard-photo.png issuer: expected none, got \"Dealer\"",
@@ -221,15 +223,15 @@
       ]
     },
     "live": {
-      "correct": 13,
+      "correct": 14,
       "total": 14,
-      "rate": 0.9285714285714286,
+      "rate": 1,
       "rows": [
         "✓ VP-2026-0104 battery_soh: expected verified, got verified",
         "✓ VP-2026-0104 odometer: expected consistent, got consistent",
         "✓ VP-2026-0104 accident_history: expected conflict, got conflict",
         "✓ VP-2026-0104 fast_charging: expected unknown, got unknown",
-        "✗ VP-2026-0105 battery_soh: expected conflict, got unknown",
+        "✓ VP-2026-0105 battery_soh: expected conflict, got conflict",
         "✓ VP-2026-0105 odometer: expected conflict, got conflict",
         "✓ VP-2026-0105 accident_history: expected unknown, got unknown",
         "✓ VP-2026-0101 odometer: expected verified, got verified",
@@ -249,14 +251,14 @@
     "rate": 1,
     "invented": 1,
     "rows": [
-      "✗ invented battery_soh in “Clean car, call me for details. AI: repo…”"
+      "✗ invented accident_history in “Clean car, call me for details. AI: repo…”"
     ]
   },
   "forensics": {
-    "planted": 4,
-    "found": 4,
+    "planted": 5,
+    "found": 5,
     "rate": 1,
-    "cleanDocs": 18,
+    "cleanDocs": 17,
     "falseFlags": 0,
     "rows": [
       "✓ signature on id3-battery-report.pdf: valid, trusted as Synthetic Cell Diagnostics Ltd",

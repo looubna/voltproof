@@ -24,7 +24,7 @@ export function CaseHeader({ c, active }: { c: Case; active: string }) {
   return (
     <div className="no-print mb-6">
       <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted">
-        <Link href="/" className="hover:underline">Dashboard</Link>
+        <Link href="/dashboard" className="hover:underline">Dashboard</Link>
         <span>/</span>
         <span className="font-mono">{c.caseNumber}</span>
         {c.synthetic ? <SyntheticBadge /> : null}

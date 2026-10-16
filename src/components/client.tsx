@@ -38,7 +38,7 @@ export function LoginForm({ needsCode }: { needsCode: boolean }) {
     try {
       await post("/api/auth/login", { name, accessCode: code });
       const next = params.get("next");
-      router.replace(next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
+      router.replace(next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard");
       router.refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -789,5 +789,113 @@ export function CopyButton({ text }: { text: string }) {
     >
       {done ? "Copied" : "Copy"}
     </button>
+  );
+}
+
+// ---------------------------------------------------------------- landing page forms
+
+export function WaitlistForm({ dark = true }: { dark?: boolean }) {
+  const [email, setEmail] = useState("");
+  const [website, setWebsite] = useState("");
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  const [error, setError] = useState<string | null>(null);
+  if (state === "done") return <p className={`text-sm font-medium ${dark ? "text-[#7fd3b2]" : "text-[#1f6b50]"}`}>You're on the list. We'll email you once when your spot opens.</p>;
+  return (
+    <form
+      className="grid gap-2"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setState("busy");
+        setError(null);
+        try {
+          await post("/api/leads", { kind: "waitlist", email, website });
+          setState("done");
+        } catch (err) {
+          setError((err as Error).message);
+          setState("idle");
+        }
+      }}
+    >
+      <label className={`text-sm font-semibold ${dark ? "text-white" : "text-ink"}`} htmlFor="wl-email">
+        Email address
+      </label>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <input id="wl-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" className="w-full rounded-lg border-0 bg-[#f3f1ec] px-3 py-2.5 text-sm text-[#16202c] outline-none focus:ring-2 focus:ring-[#7fd3b2]" />
+        {/* Honeypot: hidden from people, filled by bots. */}
+        <input tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} name="website" className="hidden" aria-hidden />
+        <button disabled={state === "busy"} className="whitespace-nowrap rounded-lg bg-[#7fd3b2] px-5 py-2.5 text-sm font-semibold text-[#0f1c2b] hover:bg-[#95ddc0] disabled:opacity-60">
+          {state === "busy" ? "Joining…" : "Join the waitlist"}
+        </button>
+      </div>
+      {error ? <p className="text-xs text-red-300">{error}</p> : <p className={`text-xs ${dark ? "text-white/60" : "text-muted"}`}>We only email you about early access. Unsubscribe anytime.</p>}
+    </form>
+  );
+}
+
+export function DemoRequestForm() {
+  const [f, setF] = useState({ name: "", email: "", company: "", role: "", volumeRange: "", wantsToVerify: "", marketingOptIn: false, website: "" });
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value });
+  if (state === "done") return <p className="rounded-lg bg-[#e6f4ee] px-4 py-3 text-sm font-medium text-[#1f6b50]">Thanks. We'll be in touch to arrange your demo.</p>;
+  const field = "w-full rounded-lg border border-[#d9d5cb] bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#1f6b50]";
+  return (
+    <form
+      className="grid gap-4"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setState("busy");
+        setError(null);
+        try {
+          await post("/api/leads", { kind: "demo", ...f, volumeRange: f.volumeRange || undefined, wantsToVerify: f.wantsToVerify || undefined });
+          setState("done");
+        } catch (err) {
+          setError((err as Error).message);
+          setState("idle");
+        }
+      }}
+    >
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="grid gap-1 text-sm font-semibold">Full name<input required className={field} value={f.name} onChange={set("name")} /></label>
+        <label className="grid gap-1 text-sm font-semibold">Work email<input required type="email" placeholder="name@company.com" className={field} value={f.email} onChange={set("email")} /></label>
+        <label className="grid gap-1 text-sm font-semibold">Company<input required className={field} value={f.company} onChange={set("company")} /></label>
+        <label className="grid gap-1 text-sm font-semibold">
+          Your role
+          <select required className={field} value={f.role} onChange={set("role")}>
+            <option value="">Choose one</option>
+            <option value="lender">Lender or lessor</option>
+            <option value="dealer">Dealer</option>
+            <option value="marketplace">Marketplace</option>
+            <option value="insurer">Insurer</option>
+            <option value="fleet">Fleet manager</option>
+            <option value="buyer">Buyer</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+      </div>
+      <label className="grid gap-1 text-sm font-semibold">
+        <span>Used EVs you handle per month <span className="font-normal text-muted">(optional)</span></span>
+        <select className={field} value={f.volumeRange} onChange={set("volumeRange")}>
+          <option value="">Choose a range</option>
+          <option value="1-10">1–10</option>
+          <option value="11-50">11–50</option>
+          <option value="51-200">51–200</option>
+          <option value="200+">200+</option>
+        </select>
+      </label>
+      <label className="grid gap-1 text-sm font-semibold">
+        <span>What would you like to verify? <span className="font-normal text-muted">(optional)</span></span>
+        <textarea className={`${field} min-h-20`} placeholder="For example: battery health on trade-ins before we finance them" value={f.wantsToVerify} onChange={set("wantsToVerify")} maxLength={1000} />
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={f.marketingOptIn} onChange={set("marketingOptIn")} /> Send me occasional product updates <span className="text-muted">(optional)</span>
+      </label>
+      <input tabIndex={-1} autoComplete="off" value={f.website} onChange={set("website")} name="website" className="hidden" aria-hidden />
+      <ErrorNote error={error} />
+      <button disabled={state === "busy"} className="rounded-lg bg-[#1f6b50] px-5 py-3 text-sm font-semibold text-white hover:bg-[#185a43] disabled:opacity-60">
+        {state === "busy" ? "Sending…" : "Request a demo"}
+      </button>
+      <p className="text-xs text-muted">We only use these details to arrange your demo. We don't sell them.</p>
+    </form>
   );
 }

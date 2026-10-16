@@ -61,6 +61,7 @@ export const FIELD_LABEL: Record<string, string> = {
   batteryTestProvider: "Battery test provider",
   damageRepair: "Damage repair",
   dcChargingSharePercent: "DC fast-charging share",
+  registrationNumber: "Registration number",
 };
 
 export const CLAIM_TYPE_LABEL: Record<ClaimType, string> = {

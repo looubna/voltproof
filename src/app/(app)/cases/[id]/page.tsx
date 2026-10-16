@@ -15,7 +15,7 @@ import type { Case, ExtractionStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-const SUMMARY_ORDER = ["vin-consistency", "vin-structure", "vehicle-consistency", "mileage-timeline", "current-odometer", "date-consistency", "battery-health", "battery-report-vin", "battery-report-age"];
+const SUMMARY_ORDER = ["vin-consistency", "vin-structure", "registration-consistency", "vehicle-consistency", "mileage-timeline", "current-odometer", "date-consistency", "battery-health", "battery-report-vin", "battery-report-age"];
 
 function DecisionImpact({ c }: { c: Case }) {
   const { open, resolved } = decisionImpactItems(c);

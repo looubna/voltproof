@@ -15,6 +15,7 @@ const METHOD_LABEL: Record<ForensicMethod, string> = {
   pdf_signature: "digital signature check",
   jpeg_ghost: "JPEG compression-history check",
   ink_marks: "stamp and signature duplicate check",
+  injection_scan: "scan for instructions to AI",
 };
 
 export const dynamic = "force-dynamic";
