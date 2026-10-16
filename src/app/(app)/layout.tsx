@@ -1,6 +1,7 @@
 // App shell: header and container for every signed-in page (and the sign-in page).
 import Link from "next/link";
 import { SignOutButton } from "@/components/client";
+import { LogoMark } from "@/components/logo";
 import { currentUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config";
 
@@ -28,10 +29,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <header className="no-print bg-navy-950 text-white">
             <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 sm:px-6">
               <Link href="/dashboard" className="flex items-center gap-2 font-semibold tracking-tight">
-                <svg viewBox="0 0 32 32" className="h-6 w-6" aria-hidden>
-                  <rect width="32" height="32" rx="7" fill="#2458c4" />
-                  <path d="M17.5 5 9 18h6l-1.5 9L23 13.5h-6.2z" fill="#fff" />
-                </svg>
+                <LogoMark className="h-6 w-6" />
                 VoltProof
               </Link>
               <nav className="flex flex-wrap gap-1 text-sm">
