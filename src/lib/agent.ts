@@ -158,7 +158,15 @@ export async function saveAgentRun(caseId: string, body: unknown) {
   };
   await getStore().updateCase(caseId, (x) => {
     x.agentRuns = [...(x.agentRuns ?? []), record].slice(-MAX_RUNS);
-    x.events.push({ at: record.finishedAt, actor: AGENT_ACTOR, type: "agent_run", detail: `Evidence agent ran (${run.model}): ${run.steps.length} steps, ${record.sellerQuestions.length} seller question(s) and ${record.issuerRequests.length} issuer request(s) drafted for review. Nothing was sent.` });
+    const q = record.sellerQuestions.length;
+    const r = record.issuerRequests.length;
+    x.events.push({
+      at: record.finishedAt,
+      actor: AGENT_ACTOR,
+      type: "agent_run",
+      detail: `Evidence agent drafted ${q} question${q === 1 ? "" : "s"} for the seller and ${r} request${r === 1 ? "" : "s"} to document issuers for you to review. Nothing was sent.`,
+      technical: `${run.model}, agent ${run.agentVersion}, ${run.steps.length} steps`,
+    });
   });
   return record;
 }

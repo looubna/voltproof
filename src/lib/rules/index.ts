@@ -540,9 +540,11 @@ export function vinStructure(input: RuleInput): Finding {
     vins.push({ vin: caseVin, where: "the case record", doc: null });
     evidence.push(caseRef("VIN", caseVin));
   }
+  let documentVins = 0;
   for (const doc of readDocs(input.documents)) {
     const u = usable(doc, "vin");
     if (u.state !== "ok") continue;
+    documentVins++;
     const v = normalizeVin(String(u.value));
     if (vins.some((x) => x.vin === v)) continue;
     vins.push({ vin: v, where: docLabel(doc), doc });
@@ -638,7 +640,7 @@ export function vinStructure(input: RuleInput): Finding {
       requiresReview: false,
     };
   }
-  const offline = `${plural(vins.length, "VIN")} checked offline: well-formed, and the manufacturer code and model-year code agree with the case record.${noteText}`;
+  const offline = `${plural(vins.length, "VIN")} checked: the format is valid, and the maker and model-year codes match the case record.${noteText}`;
   const registerNote = register && register.outcome !== "ok" ? ` ${register.message}` : "";
   if (decode) {
     // A lookup that failed or did not recognise the VIN confirms nothing, so it is not shown as Consistent.
@@ -654,11 +656,22 @@ export function vinStructure(input: RuleInput): Finding {
       requiresReview: false,
     };
   }
+  if (documentVins === 0) {
+    // Only the VIN typed into the case: a valid format is not agreement between sources.
+    return {
+      ...base,
+      status: "unknown",
+      result: `${offline} No document shows a VIN and no VIN lookup has been run, so nothing confirms it yet.${registerNote}`,
+      nextAction: "Upload the registration document, or look the VIN up.",
+      decisionImpact: false,
+      requiresReview: false,
+    };
+  }
   return {
     ...base,
     status: "consistent",
-    result: `${offline} No reference decoder was consulted.${registerNote}`,
-    nextAction: "Run a VIN decode against the manufacturer reference database.",
+    result: `${offline} No VIN lookup has been run yet.${registerNote}`,
+    nextAction: "Look the VIN up in a VIN database.",
     decisionImpact: false,
     requiresReview: false,
   };
@@ -861,7 +874,7 @@ export function integrityFindings(input: RuleInput): Finding[] {
       ruleId: "integrity_indicators",
       category: "integrity",
       title: fields.length ? `Possible edit to the ${joinList(fields.map(fieldLabelInline))}` : "Possible signs of document alteration",
-      checked: "File checks (type, editing software, revision history), digital signatures, and field-level forensic checks: text written over other text, values in a font nothing else on the page uses, annotations laid over values, and photo regions without the photo's compression history.",
+      checked: "File checks (type, editing software, revision history), digital signatures, and checks on each value: text typed over other text, values in a font nothing else on the page uses, notes laid over values, and areas of a photo that look pasted in or retouched.",
       evidence,
       // A check that ties a possible edit to a specific value failed, as does a broken signature: both are
       // Conflicts, like the claims resting on them. File-level hints alone (e.g. editing software) stay Unknown.

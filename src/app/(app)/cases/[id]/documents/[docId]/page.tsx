@@ -11,12 +11,12 @@ import { formatOdometer } from "@/lib/normalize";
 import type { FieldName, ForensicMethod, Odometer } from "@/lib/types";
 
 const METHOD_LABEL: Record<ForensicMethod, string> = {
-  pdf_text_layer: "PDF text-layer check",
-  pdf_annotation: "annotation check",
-  pdf_signature: "digital signature check",
-  jpeg_ghost: "JPEG compression-history check",
-  ink_marks: "stamp and signature duplicate check",
-  injection_scan: "scan for instructions to AI",
+  pdf_text_layer: "text typed over other text",
+  pdf_annotation: "notes laid over values",
+  pdf_signature: "digital signature",
+  jpeg_ghost: "pasted or retouched areas in the photo",
+  ink_marks: "copied stamps and signatures",
+  injection_scan: "hidden instructions to AI",
 };
 
 export const dynamic = "force-dynamic";
@@ -63,11 +63,15 @@ export default async function DocumentPage({ params, searchParams }: { params: P
                   <li key={k}>• {i.message}</li>
                 ))}
               </ul>
-              {!report && <p className="mt-2 text-xs text-muted">Run the evidence agent on the case for a detailed explanation by Gemini 2.5 Pro.</p>}
+              {!report && (
+                <p className="mt-2 text-xs text-muted">
+                  For a step-by-step explanation of each sign, run the evidence agent on the case overview.<span className="tech-detail"> The explanation is written by Gemini 2.5 Pro.</span>
+                </p>
+              )}
             </div>
             {report ? <ForensicReportCard c={c} report={report} showDocLink={false} /> : d.forensics?.heatmapKey ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={`${src}?view=heatmap`} alt="Compression-history map" className="max-h-80 rounded-lg border border-line" />
+              <img src={`${src}?view=heatmap`} alt="Map of the photo: red marks the areas that look pasted in or retouched" className="max-h-80 rounded-lg border border-line" />
             ) : null}
           </section>
         );
@@ -96,12 +100,18 @@ export default async function DocumentPage({ params, searchParams }: { params: P
               <>
                 <p className="mb-2 text-xs text-muted">
                   {ex.mode === "demo-fixture" ? (
-                    "Demo fixture (hand-written, not a live AI call)"
+                    <>
+                      Sample values written for the demo; no AI used.<span className="tech-detail"> (Hand-written demo fixture.)</span>
+                    </>
                   ) : (
                     <>
-                      Read by <span className="font-mono">{ex.model}</span> on <DateTime iso={ex.extractedAt} />
-                      {/* The header names the model for new uploads; say so when this older reading used another one. */}
-                      {cfg.aiMode === "vertex" && ex.model !== cfg.geminiModel ? `. New uploads are now read by ${cfg.geminiModel}; this reading is kept as it was made.` : null}
+                      Read by AI on <DateTime iso={ex.extractedAt} />
+                      <span className="tech-detail">
+                        {" "}
+                        using <span className="font-mono">{ex.model}</span>
+                        {/* The header names the model for new uploads; say so when this older reading used another one. */}
+                        {cfg.aiMode === "vertex" && ex.model !== cfg.geminiModel ? `. New uploads are now read by ${cfg.geminiModel}; this reading is kept as it was made.` : null}
+                      </span>
                     </>
                   )}
                 </p>
@@ -138,27 +148,29 @@ export default async function DocumentPage({ params, searchParams }: { params: P
                 {c.synthetic ? PROVENANCE_LABEL[d.provenance] : <DocumentSourceSelect caseId={c.id} docId={d.id} value={d.provenance} />}
                 <p className="mt-0.5 text-muted">Only readings captured by dealership staff can be Verified. A change is recorded in the case history.</p>
               </dd>
-              <dt className="mt-1 text-muted">SHA-256 at upload</dt>
-              <dd className="break-all font-mono">{d.integrity.sha256}</dd>
-              <dt className="mt-1 text-muted">Detected type</dt>
-              <dd>{d.integrity.detectedType.toUpperCase()} · {(d.sizeBytes / 1024).toFixed(0)} KB</dd>
-              <dt className="mt-1 text-muted">Basic integrity checks</dt>
+              <dt className="mt-1 text-muted">File</dt>
+              <dd>
+                {d.integrity.detectedType.toUpperCase()} · {(d.sizeBytes / 1024).toFixed(0)} KB
+              </dd>
+              <dt className="tech-detail mt-1 text-muted">Fingerprint (SHA-256) at upload</dt>
+              <dd className="tech-detail break-all font-mono">{d.integrity.sha256}</dd>
+              <dt className="mt-1 text-muted">Basic file checks</dt>
               <dd>
                 {d.integrity.indicators.filter((i) => i.severity === "potential").length
-                  ? d.integrity.indicators.filter((i) => i.severity === "potential").map((i) => <p key={i.code} className="text-conflict-fg">Potential indicator: {i.message}</p>)
-                  : "No indicators found (not proof of authenticity)."}
+                  ? d.integrity.indicators.filter((i) => i.severity === "potential").map((i) => <p key={i.code} className="text-conflict-fg">Possible sign: {i.message}</p>)
+                  : "Nothing found (this does not prove the document is genuine)."}
               </dd>
-              <dt className="mt-1 text-muted">Forensic checks</dt>
+              <dt className="mt-1 text-muted">Checks for edits</dt>
               <dd>
                 {!d.forensics ? (
                   "Not run."
                 ) : (
                   <>
-                    <span className="text-muted">Ran: {d.forensics.methods.length ? d.forensics.methods.map((m) => METHOD_LABEL[m]).join(", ") : "none applicable to this file"}.</span>
+                    <span className="text-muted">Looked for: {d.forensics.methods.length ? d.forensics.methods.map((m) => METHOD_LABEL[m]).join(", ") : "nothing applies to this file"}.</span>
                     {d.forensics.indicators.filter((i) => i.severity === "potential").map((i, k) => (
-                      <p key={k} className="text-conflict-fg">Potential indicator: {i.message}</p>
+                      <p key={k} className="text-conflict-fg">Possible sign: {i.message}</p>
                     ))}
-                    {!d.forensics.indicators.some((i) => i.severity === "potential") && <p>No signs of editing found (not proof of authenticity).</p>}
+                    {!d.forensics.indicators.some((i) => i.severity === "potential") && <p>No signs of editing found (this does not prove the document is genuine).</p>}
                   </>
                 )}
               </dd>
@@ -172,7 +184,7 @@ export default async function DocumentPage({ params, searchParams }: { params: P
                     ))
                   : "None. A visible stamp or signature on the page is not a cryptographic signature and proves nothing by itself."}
               </dd>
-              <dt className="mt-1 text-muted">Issuer verification</dt>
+              <dt className="mt-1 text-muted">Confirmed with the issuer</dt>
               <dd>
                 {d.verifications?.length
                   ? [...d.verifications].reverse().map((v) => (
@@ -182,12 +194,12 @@ export default async function DocumentPage({ params, searchParams }: { params: P
                         {v.note ? `: “${v.note}”` : ""}
                       </p>
                     ))
-                  : "Not performed — authenticity not verified."}
+                  : "Not yet. Contact the company that issued it to confirm the document is genuine."}
               </dd>
               {d.extractionHistory.length > 0 && (
                 <>
-                  <dt className="mt-1 text-muted">Earlier extractions kept</dt>
-                  <dd>
+                  <dt className="tech-detail mt-1 text-muted">Earlier readings kept</dt>
+                  <dd className="tech-detail">
                     {d.extractionHistory.map((h, i) => (
                       <span key={i}>
                         {i ? "; " : ""}

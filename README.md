@@ -18,7 +18,7 @@ npm run dev            # http://localhost:3000
 Sign in with any name. No access code is needed until `VOLTPROOF_ACCESS_CODE` is set. Five synthetic cases are created on first load.
 
 ```bash
-npm test               # 144 tests: rules, claims, grounding, listing parsing, leads, Gemini retries, workflow, report, brand assets
+npm test               # 155 tests: rules, claims, grounding, listing parsing, leads, Gemini retries, workflow, report, brand assets, dashboard and history
 npm run eval           # evaluation on synthetic data → eval/RESULTS.md
 npm run samples        # regenerate the synthetic PDFs/PNGs in /samples (already committed)
 npm run brand          # regenerate the favicon and app icons from src/assets/brand (already committed)
@@ -30,7 +30,7 @@ The logo artwork in `src/assets/brand` comes from the landing page design. Pages
 
 1. **VP-2026-0104 Volkswagen ID.3** is the landing page sample made real: battery **Verified** (dealer-ordered report, 12 days old, same VIN), mileage **Consistent**, accident history **Conflict** (an insurance record lists a rear-collision repair), fast charging **Unknown**. The report ends with "1 conflict to review before you pay. 2 claims backed by evidence, 1 still missing." and questions to ask the seller. One of its invoices contains a prompt-injection line aimed at AI systems.
 2. **Add seller claims** on any case: paste a listing (English, Korean or Indonesian), click *Find claims*, check the proposals, save. Statuses update as documents arrive.
-3. **Dashboard** → open **VP-2026-0103 Tesla Model 3**. Decision Impact shows the mileage conflict (41,200 km in March → 38,900 km in September) and the VIN conflict (invoice …7730 vs registration …4821). Both are explained as needing investigation, not as proof of fraud.
+3. **Dashboard** → open **VP-2026-0103 Tesla Model 3**. "Before you make an offer" shows the mileage conflict (41,200 km in March → 38,900 km in September) and the VIN conflict (invoice …7730 vs registration …4821). Both are explained as needing investigation, not as proof of fraud.
 4. **Evidence & checks** → every value has a page and quote. Click one to open the source document with that quote shown.
 5. **Review** → mark the mileage conflict *More information requested* or *Resolved* with a note. The machine finding stays unchanged, and the decision is recorded with your name and the time.
 6. **Report** → print or save as PDF, or download JSON. It includes the review notes and the authenticity limitation.
@@ -149,7 +149,7 @@ gcloud run deploy voltproof --source . --region $REGION --service-account $SA --
 
 | | Status |
 |---|---|
-| Case creation, upload validation, SHA-256, ten rule checks, four statuses, Decision Impact, review queue with filters and paging + audit trail, case archiving, report (print/PDF/JSON), integrity indicators | **Working, tested** (`npm test`) |
+| Case creation, upload validation, SHA-256, ten rule checks, four statuses, a step checklist and "Before you make an offer" summary per case, dashboard search and filters, review queue with filters and paging + audit trail, case archiving, report (print/PDF/JSON), integrity indicators | **Working, tested** (`npm test`) |
 | Gemini extraction on Vertex AI, Firestore, Cloud Storage, ADK agent, PaddleOCR service | **Live** on Cloud Run (project `voltproof-demo-2026`) |
 | Forensic checks, digital signatures with a trust list, NHTSA decode, NZ register lookup, manual issuer verification | **Live** |
 | Demo cases and their documents | **Synthetic.** Fixtures are hand-written, and their confidence values are illustrative |

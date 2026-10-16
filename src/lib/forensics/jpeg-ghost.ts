@@ -124,7 +124,7 @@ export async function analyzeJpegGhost(file: Buffer, fields: ExtractionFields): 
         method: "jpeg_ghost",
         field: name,
         page: 1,
-        message: `${FIELD_LABEL[name] ?? name}: the area showing this value does not carry the compression history of the rest of the photo (the photo was first saved at about quality ${best.q}; this area was not). This is what a pasted-in or retouched value looks like.`,
+        message: `${FIELD_LABEL[name] ?? name}: this part of the photo looks pasted in or retouched. It was not saved the same way as the rest of the photo, which was first saved at about JPEG quality ${best.q}.`,
       });
     }
   }

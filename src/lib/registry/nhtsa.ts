@@ -5,7 +5,7 @@
 // vehicles sold in North America; others often decode make and year only.
 import { isNorthAmerican } from "../vin";
 
-export const VPIC_NAME = "NHTSA vPIC VIN decoder";
+export const VPIC_NAME = "US NHTSA VIN database";
 
 export interface VinDecode {
   outcome: "ok" | "not_found" | "error";

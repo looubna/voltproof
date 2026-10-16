@@ -128,7 +128,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                 <StatusBadge status={s} size="sm" />
                 <span className="text-xl font-semibold tabular-nums">{r.statusCounts[s]}</span>
               </div>
-              <p className="mt-1 text-[11px] leading-snug text-muted">{STATUS_MEANING[s]}</p>
+              <p className="mt-1 text-xs leading-snug text-muted">{STATUS_MEANING[s]}</p>
             </div>
           ))}
         </div>

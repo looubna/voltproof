@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { cookies } from "next/headers";
 import { connection } from "next/server";
+import { TECHNICAL_COOKIE } from "@/lib/preferences";
 import "./globals.css";
 
 const sans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-plex-sans" });
@@ -24,8 +26,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // (src/middleware.ts) to its scripts. Without this, the built-in 404 page is prerendered
   // at build time without a nonce, and the browser blocks its scripts.
   await connection();
+  // Read here so the first paint already hides or shows technical details (see globals.css).
+  const technical = (await cookies()).get(TECHNICAL_COOKIE)?.value === "on";
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
+    <html lang="en" className={`${sans.variable} ${mono.variable}`} data-technical={technical ? "on" : "off"}>
       <body className="min-h-screen">{children}</body>
     </html>
   );

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ReviewFilters, ReviewForm } from "@/components/client";
 import { CaseHeader } from "@/components/case-header";
 import { NavLink } from "@/components/nav-link";
-import { DateTime, EmptyState, FindingCard, PageTitle, SyntheticBadge } from "@/components/ui";
+import { DateTime, EmptyState, FindingCard, PageTitle, StatusKey, SyntheticBadge } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import { getCase, listCases } from "@/lib/cases";
 import { reviewQueue, reviewsFor } from "@/lib/derive";
@@ -91,20 +91,30 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
               </span>
             </div>
             <ReviewFilters cases={caseOptions} showCase={!sp.case} />
+            <StatusKey />
           </div>
 
           {groups.length === 0 ? (
-            <EmptyState title={filtered ? "No items match these filters" : showAll ? "Nothing needs review" : "No open items"}>
-              {filtered ? (
-                <Link href={hrefWith(sp, { status: undefined, q: undefined, page: undefined })} className="link">
-                  Clear the filters
+            single && single.documents.length === 0 ? (
+              <EmptyState title="Nothing to review yet">
+                Upload the seller&apos;s documents first; anything that needs a person will appear here.{" "}
+                <Link href={`/cases/${single.id}#upload`} className="link">
+                  Upload documents
                 </Link>
-              ) : showAll ? (
-                "No findings in this view require human review."
-              ) : (
-                "Every flagged item has been resolved by a reviewer."
-              )}
-            </EmptyState>
+              </EmptyState>
+            ) : (
+              <EmptyState title={filtered ? "No items match these filters" : showAll ? "Nothing needs review" : "No open items"}>
+                {filtered ? (
+                  <Link href={hrefWith(sp, { status: undefined, q: undefined, page: undefined })} className="link">
+                    Clear the filters
+                  </Link>
+                ) : showAll ? (
+                  "No findings in this view require human review."
+                ) : (
+                  "Every flagged item has been resolved by a reviewer."
+                )}
+              </EmptyState>
+            )
           ) : (
             <div className="grid gap-10">
               {groups.map(({ c, items }) => (

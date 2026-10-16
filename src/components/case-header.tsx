@@ -33,15 +33,17 @@ export function CaseHeader({ c, active }: { c: Case; active: string }) {
         <span>/</span>
         <span className="font-mono">{c.caseNumber}</span>
         {c.synthetic ? <SyntheticBadge /> : null}
-        {c.archivedAt ? <span className="rounded-full bg-unknown-bg px-2 py-0.5 text-[11px] font-semibold text-unknown-fg">Archived</span> : null}
+        {c.archivedAt ? <span className="rounded-full bg-unknown-bg px-2 py-0.5 text-xs font-semibold text-unknown-fg">Archived</span> : null}
       </div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
             {c.vehicle.year} {c.vehicle.make} {c.vehicle.model}
           </h1>
-          <p className="mt-0.5 text-sm text-muted">
-            VIN <span className="font-mono text-ink">{c.vehicle.vin || "not entered"}</span> · {c.documents.length} document{c.documents.length === 1 ? "" : "s"} ·{" "}
+          <p className="mt-0.5 wrap-break-word text-sm text-muted">
+            {c.reference ? <span className="font-medium text-ink">{c.reference} · </span> : null}
+            VIN {c.vehicle.vin ? <span className="break-all font-mono text-ink">{c.vehicle.vin}</span> : "not entered"} ·{" "}
+            {c.documents.length ? `${c.documents.length} document${c.documents.length === 1 ? "" : "s"} · ` : ""}
             <span className={s.stage === "awaiting_review" ? "font-medium text-conflict-fg" : ""}>{STAGE_LABEL[s.stage]}</span>
           </p>
         </div>
@@ -72,7 +74,7 @@ export function CaseHeader({ c, active }: { c: Case; active: string }) {
                 t.label
               )}
               {t.key === "review" && s.openReviewItems ? (
-                <span className="ml-1.5 rounded-full bg-conflict-bg px-1.5 py-0.5 text-[11px] font-semibold text-conflict-fg" aria-label={`${s.openReviewItems} open`}>
+                <span className="ml-1.5 rounded-full bg-conflict-bg px-1.5 py-0.5 text-xs font-semibold text-conflict-fg" aria-label={`${s.openReviewItems} open`}>
                   {s.openReviewItems}
                 </span>
               ) : null}

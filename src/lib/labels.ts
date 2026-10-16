@@ -15,6 +15,14 @@ export const STATUS_MEANING: Record<Status, string> = {
   unknown: "There is not enough evidence to reach a conclusion.",
 };
 
+/** One line per status, for the visible legends (a hover title alone is invisible on touch screens). */
+export const STATUS_SHORT: Record<Status, string> = {
+  verified: "An independent source confirms it.",
+  consistent: "The documents agree, but nothing independent confirms it.",
+  conflict: "Sources disagree or a check failed. Look into it before you pay.",
+  unknown: "Not enough evidence yet. Missing, not wrong.",
+};
+
 export const DOC_TYPE_LABEL: Record<DocumentType, string> = {
   service_invoice: "Service invoice",
   purchase_invoice: "Purchase invoice",

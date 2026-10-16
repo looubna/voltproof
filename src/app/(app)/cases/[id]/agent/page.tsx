@@ -40,7 +40,12 @@ export default async function AgentRunPage({ params }: { params: Promise<{ id: s
         </Link>
         <h2 className="mt-2 text-xl font-semibold">What the evidence agent did</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          An ADK 2 workflow running on Gemini (Vertex AI). It reads the case, runs registry checks in parallel, decides which documents to re-check, has Gemini Pro explain every document the checks flagged, and drafts questions and issuer requests. It cannot set a status, record a review or send anything.
+          Every step the agent took on this case: the vehicle registers it looked up, the documents it re-read, its explanation of any document that looks edited, and the drafts it wrote for you. It cannot set
+          a status, record a review or send anything.
+          <span className="tech-detail">
+            {" "}
+            An ADK 2 workflow on Gemini (Vertex AI): registry checks run in parallel, Gemini Pro explains each flagged document.
+          </span>
         </p>
       </div>
       {!run ? (
@@ -59,7 +64,7 @@ export default async function AgentRunPage({ params }: { params: Promise<{ id: s
                 <li key={i} className="grid gap-1 px-5 py-2.5 text-sm sm:grid-cols-[34px_210px_1fr_auto]">
                   <span className="text-xs tabular-nums text-muted">{i + 1}</span>
                   <span className="text-xs">
-                    <span className={`mr-1.5 inline-block rounded-full px-1.5 py-px text-[10px] font-semibold ${KIND[s.kind]?.cls ?? ""}`}>{KIND[s.kind]?.label ?? s.kind}</span>
+                    <span className={`mr-1.5 inline-block rounded-full px-1.5 py-px text-xs font-semibold ${KIND[s.kind]?.cls ?? ""}`}>{KIND[s.kind]?.label ?? s.kind}</span>
                     <span className="text-muted">{NODE_LABEL[s.node] ?? s.node}</span>
                   </span>
                   <span>
@@ -77,11 +82,11 @@ export default async function AgentRunPage({ params }: { params: Promise<{ id: s
           </section>
 
           <section className="grid gap-4">
-            <h3 className="text-lg font-semibold">Falsification detection</h3>
+            <h3 className="text-lg font-semibold">Documents that may have been edited</h3>
             {run.forensicReport?.length ? (
               run.forensicReport.map((r) => <ForensicReportCard key={r.documentId} c={c} report={r} />)
             ) : (
-              <p className="text-sm text-muted">No document on this case showed signs of editing, so there was nothing for the forensic analyst to explain.</p>
+              <p className="text-sm text-muted">No document on this case showed signs of editing, so there was nothing to explain.</p>
             )}
           </section>
 

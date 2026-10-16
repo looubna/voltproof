@@ -104,11 +104,12 @@ export function LoginForm({ needsCode }: { needsCode: boolean }) {
   );
 }
 
-export function SignOutButton() {
+export function SignOutButton({ className = "text-xs text-white/70 hover:text-white" }: { className?: string }) {
   const router = useRouter();
   return (
     <button
-      className="text-xs text-white/70 hover:text-white"
+      type="button"
+      className={className}
       onClick={async () => {
         await fetch("/api/auth/logout", { method: "POST" });
         router.replace("/login");
@@ -152,7 +153,29 @@ const STATE_TEXT: Record<UploadState, string> = {
 const DEFAULT_PROVENANCE: Provenance = "seller_provided";
 const UPLOAD_CONCURRENCY = 3;
 
-export function FilePicker({ files, setFiles, update, maxMb, disabled, onSourceSaved }: { files: PendingFile[]; setFiles: (f: PendingFile[]) => void; update: UpdateFile; maxMb: number; disabled?: boolean; onSourceSaved?: () => void }) {
+/** "about a minute", "a few seconds": how long reading one document usually takes. */
+function typicalWait(seconds: number) {
+  return seconds >= 45 ? "about a minute" : seconds >= 15 ? `about ${seconds} seconds` : "a few seconds";
+}
+
+export function FilePicker({
+  files,
+  setFiles,
+  update,
+  maxMb,
+  disabled,
+  onSourceSaved,
+  typicalSeconds,
+}: {
+  files: PendingFile[];
+  setFiles: (f: PendingFile[]) => void;
+  update: UpdateFile;
+  maxMb: number;
+  disabled?: boolean;
+  onSourceSaved?: () => void;
+  /** How long reading one document usually takes on this server, for the progress message. */
+  typicalSeconds: number;
+}) {
   const [error, setError] = useState<string | null>(null);
   function add(list: FileList | null) {
     if (!list) return;
@@ -187,6 +210,7 @@ export function FilePicker({ files, setFiles, update, maxMb, disabled, onSourceS
         <input type="file" multiple accept={ACCEPT} className="sr-only" onChange={(e) => (add(e.target.files), (e.target.value = ""))} disabled={disabled} />
       </label>
       <ErrorNote error={error} />
+      <UploadProgress files={files} typicalSeconds={typicalSeconds} />
       {files.length > 0 && (
         <ul className="divide-y divide-line rounded-xl border border-line bg-[#fdfcfa]">
           {files.map((p, i) => {
@@ -211,14 +235,16 @@ export function FilePicker({ files, setFiles, update, maxMb, disabled, onSourceS
                     </option>
                   ))}
                 </select>
-                <span
-                  role="status"
-                  className={`w-40 text-right text-xs font-medium ${p.state === "error" ? "text-red-700" : p.state === "done" ? "text-verified-fg" : p.state === "not_read" ? "text-conflict-fg" : "text-muted"}`}
-                  title={p.message}
-                >
+                <span className={`w-40 text-right text-xs font-medium ${p.state === "error" ? "text-red-700" : p.state === "done" ? "text-verified-fg" : p.state === "not_read" ? "text-conflict-fg" : "text-muted"}`}>
                   {STATE_TEXT[p.state]}
                   {working ? <Elapsed key={p.startedAt} since={p.startedAt} /> : null}
                 </span>
+                {p.state === "reading" ? (
+                  <div className="grid w-full gap-1">
+                    <div className="progress" role="progressbar" aria-label={`Reading ${p.file.name}`} aria-valuetext="In progress" />
+                    <p className="text-xs text-muted">Reading and checking usually takes {typicalWait(typicalSeconds)} per document. Keep this page open.</p>
+                  </div>
+                ) : null}
                 {p.state === "queued" && (
                   <button type="button" className="text-xs text-muted hover:text-red-700" onClick={() => setFiles(files.filter((_, j) => j !== i))}>
                     Remove
@@ -232,6 +258,22 @@ export function FilePicker({ files, setFiles, update, maxMb, disabled, onSourceS
         </ul>
       )}
     </div>
+  );
+}
+
+/** One live summary for screen readers and sighted users: "2 of 4 documents done". */
+function UploadProgress({ files, typicalSeconds }: { files: PendingFile[]; typicalSeconds: number }) {
+  const started = files.filter((f) => f.state !== "queued");
+  if (!started.length) return <p className="sr-only" aria-live="polite" />;
+  const finished = files.filter((f) => f.state === "done" || f.state === "not_read" || f.state === "error").length;
+  const failed = files.filter((f) => f.state === "error").length;
+  const working = files.some((f) => f.state === "uploading" || f.state === "reading");
+  return (
+    <p aria-live="polite" className="text-sm font-medium text-ink">
+      {working
+        ? `${finished} of ${files.length} document${files.length === 1 ? "" : "s"} done. Each takes ${typicalWait(typicalSeconds)}; up to ${UPLOAD_CONCURRENCY} are read at once.`
+        : `All ${files.length} document${files.length === 1 ? "" : "s"} processed${failed ? `, ${failed} failed` : ""}.`}
+    </p>
   );
 }
 
@@ -261,7 +303,7 @@ async function uploadAll(caseId: string, files: PendingFile[], update: UpdateFil
         }
         update(i, { state: "reading", startedAt: Date.now(), message: undefined });
         const r = await post(`/api/cases/${caseId}/documents/${docId}/process`, {});
-        if (r.status === "extracted") update(i, { state: "done", message: r.mode === "demo-fixture" ? "Synthetic sample recognised; demo fixture used." : undefined });
+        if (r.status === "extracted") update(i, { state: "done", message: r.mode === "demo-fixture" ? "Sample document recognised: demo values, no AI used." : undefined });
         else if (r.status === "not_configured") update(i, { state: "not_read", message: r.error });
         else {
           failures++;
@@ -291,10 +333,10 @@ interface CaseMatch {
   archived: boolean;
 }
 
-export function NewCaseForm({ maxMb }: { maxMb: number }) {
+export function NewCaseForm({ maxMb, typicalSeconds }: { maxMb: number; typicalSeconds: number }) {
   const router = useRouter();
   const { files, setFiles, update } = useFileQueue();
-  const [vehicle, setVehicle] = useState({ make: "", model: "", year: "", vin: "" });
+  const [vehicle, setVehicle] = useState({ make: "", model: "", year: "", vin: "", reference: "" });
   const [vinTouched, setVinTouched] = useState(false);
   const [duplicates, setDuplicates] = useState<CaseMatch[]>([]);
   const [confirmDuplicate, setConfirmDuplicate] = useState(false);
@@ -384,6 +426,15 @@ export function NewCaseForm({ maxMb }: { maxMb: number }) {
               {showVinProblem ? vinProblem : (vinHint ?? "Optional. Every document is compared against this VIN.")}
             </span>
           </label>
+          <label className="grid gap-1 text-sm sm:col-span-2">
+            <span className="font-medium">
+              Your reference <span className="font-normal text-muted">(optional)</span>
+            </span>
+            <input className="input" value={vehicle.reference} onChange={set("reference")} maxLength={80} placeholder="e.g. Stock A-1042, or the seller's name" disabled={!!caseId} aria-describedby="ref-help" />
+            <span id="ref-help" className="text-xs text-muted">
+              Shown on the dashboard so you can tell similar cases apart.
+            </span>
+          </label>
         </div>
         {duplicates.length > 0 && !caseId && (
           <div role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
@@ -413,7 +464,7 @@ export function NewCaseForm({ maxMb }: { maxMb: number }) {
           Say where each document came from. Every file starts as <strong>{PROVENANCE_LABEL[DEFAULT_PROVENANCE]}</strong>; choose <strong>{PROVENANCE_LABEL.dealer_captured}</strong> only for photos your staff took
           themselves. Only those readings can be marked Verified.
         </p>
-        <FilePicker files={files} setFiles={setFiles} update={update} maxMb={maxMb} disabled={busy} />
+        <FilePicker files={files} setFiles={setFiles} update={update} maxMb={maxMb} disabled={busy} typicalSeconds={typicalSeconds} />
       </section>
       <ErrorNote error={error} />
       <div className="flex flex-wrap items-center gap-3">
@@ -430,7 +481,7 @@ export function NewCaseForm({ maxMb }: { maxMb: number }) {
   );
 }
 
-export function AddDocuments({ caseId, maxMb }: { caseId: string; maxMb: number }) {
+export function AddDocuments({ caseId, maxMb, typicalSeconds }: { caseId: string; maxMb: number; typicalSeconds: number }) {
   const { refresh, refreshing } = useRefresh();
   const { files, setFiles, update } = useFileQueue();
   const [busy, setBusy] = useState(false);
@@ -438,7 +489,7 @@ export function AddDocuments({ caseId, maxMb }: { caseId: string; maxMb: number 
   const working = busy || refreshing;
   return (
     <div className="grid gap-3">
-      <FilePicker files={files} setFiles={setFiles} update={update} maxMb={maxMb} disabled={working} onSourceSaved={refresh} />
+      <FilePicker files={files} setFiles={setFiles} update={update} maxMb={maxMb} disabled={working} onSourceSaved={refresh} typicalSeconds={typicalSeconds} />
       {files.length > 0 && (
         <div className="flex gap-2">
           <button
@@ -819,7 +870,7 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
   const { refresh, refreshing } = useRefresh();
   const [text, setText] = useState("");
   const [drafts, setDrafts] = useState<DraftClaim[]>([]);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<{ text: string; technical?: string } | null>(null);
   const [busy, setBusy] = useState<"parse" | "save" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -833,8 +884,11 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
     try {
       const r = (await post(`/api/cases/${caseId}/claims/parse`, { text })) as { proposals: Proposal[]; mode: string; model: string | null; note?: string; dropped: string[] };
       setDrafts(r.proposals.map(toDraft));
-      const source = r.mode === "vertex-gemini" ? `Read by ${r.model} (Gemini on Vertex AI).` : r.note ?? "";
-      setNote(r.proposals.length ? `${r.proposals.length} claim${r.proposals.length === 1 ? "" : "s"} found. Check them before saving. ${source}` : `No claims found in this text. ${source}`);
+      const n = r.proposals.length;
+      setNote({
+        text: n ? `${n} claim${n === 1 ? "" : "s"} found. Check ${n === 1 ? "it" : "them"} before saving.` : "No claims found in this text. You can add one by hand.",
+        technical: r.mode === "vertex-gemini" ? `Read by ${r.model} (Gemini on Vertex AI).` : r.note,
+      });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -861,9 +915,10 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
                   : { number: Number(d.number) },
         })),
       });
+      const n = drafts.length;
       setDrafts([]);
       setText("");
-      setNote(null);
+      setNote({ text: `${n} claim${n === 1 ? "" : "s"} saved and checked. ${n === 1 ? "Its status is" : "Their statuses are"} shown above.` });
       refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -899,7 +954,12 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
           </button>
         )}
       </div>
-      {note && <p className="text-xs text-muted">{note}</p>}
+      {note && (
+        <p role="status" className="text-sm text-ink">
+          {note.text}
+          {note.technical ? <span className="tech-detail text-xs text-muted"> {note.technical}</span> : null}
+        </p>
+      )}
       {drafts.length > 0 && (
         <ul className="grid gap-2">
           {drafts.map((d) => (
@@ -964,29 +1024,101 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
   );
 }
 
-export function WithdrawClaimButton({ caseId, claimId }: { caseId: string; claimId: string }) {
+/** Withdraws a claim after a confirm step. The claim stays in the history; it is just no longer checked. */
+export function WithdrawClaimButton({ caseId, claimId, label }: { caseId: string; claimId: string; label: string }) {
   const { refresh, refreshing } = useRefresh();
+  const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const working = busy || refreshing;
+  if (!armed)
+    return (
+      <button type="button" className="no-print btn btn-secondary px-3 py-1 text-xs" onClick={() => setArmed(true)} aria-label={`Withdraw claim: ${label}`}>
+        Withdraw
+      </button>
+    );
   return (
-    <button
-      className="no-print text-[11px] text-muted hover:text-red-700"
-      disabled={busy || refreshing}
-      title="Withdraw this claim. It stays in the history but is no longer checked."
-      onClick={async () => {
+    <div role="group" aria-label={`Withdraw claim: ${label}`} className="no-print flex w-full flex-wrap items-center justify-end gap-2 rounded-lg bg-canvas px-3 py-2 text-sm sm:w-auto">
+      <span className="text-muted">Stop checking this claim? It stays in the history.</span>
+      <button
+        type="button"
+        className="btn btn-primary px-3 py-1 text-xs"
+        disabled={working}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            const res = await fetch(`/api/cases/${caseId}/claims/${claimId}`, { method: "DELETE" });
+            if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `Request failed (${res.status})`);
+            refresh();
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {working ? "Withdrawing…" : "Yes, withdraw"}
+      </button>
+      <button type="button" className="btn btn-secondary px-3 py-1 text-xs" disabled={working} onClick={() => setArmed(false)}>
+        Cancel
+      </button>
+      {error ? <span role="alert" className="w-full text-xs text-red-700">{error}</span> : null}
+    </div>
+  );
+}
+
+/** The reviewer's own label for a case (stock number, seller name), so similar cases can be told apart. */
+export function ReferenceEditor({ caseId, value }: { caseId: string; value: string | null }) {
+  const { refresh, refreshing } = useRefresh();
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!editing)
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2">
+        {value ? <span>{value}</span> : <span className="text-muted">None</span>}
+        <button type="button" className="text-sm font-medium text-brand-600 hover:underline" onClick={() => (setText(value ?? ""), setEditing(true))}>
+          {value ? "Edit" : "Add"}
+        </button>
+      </span>
+    );
+  return (
+    <form
+      className="grid gap-2"
+      onSubmit={async (e) => {
+        e.preventDefault();
         setBusy(true);
-        await fetch(`/api/cases/${caseId}/claims/${claimId}`, { method: "DELETE" });
-        setBusy(false);
-        refresh();
+        setError(null);
+        try {
+          await send("PATCH", `/api/cases/${caseId}`, { reference: text });
+          setEditing(false);
+          refresh();
+        } catch (err) {
+          setError((err as Error).message);
+        } finally {
+          setBusy(false);
+        }
       }}
     >
-      {busy || refreshing ? "Withdrawing…" : "Withdraw"}
-    </button>
+      <input className="input" value={text} onChange={(e) => setText(e.target.value)} maxLength={80} placeholder="e.g. Stock A-1042, or the seller's name" aria-label="Your reference for this case" autoFocus />
+      <div className="flex gap-2">
+        <button className="btn btn-primary px-3 py-1 text-xs" disabled={busy || refreshing}>
+          {busy || refreshing ? "Saving…" : "Save"}
+        </button>
+        <button type="button" className="btn btn-secondary px-3 py-1 text-xs" onClick={() => setEditing(false)}>
+          Cancel
+        </button>
+      </div>
+      {error ? <span role="alert" className="text-xs text-red-700">{error}</span> : null}
+    </form>
   );
 }
 
 // ---------------------------------------------------------------- registry and issuer checks
 
-export function VinDecodeButton({ caseId, provider = "nhtsa_vpic", label = "Decode VIN with NHTSA vPIC" }: { caseId: string; provider?: "nhtsa_vpic" | "nzta_mvr"; label?: string }) {
+export function VinDecodeButton({ caseId, provider = "nhtsa_vpic", label = "Look up the VIN (US database)" }: { caseId: string; provider?: "nhtsa_vpic" | "nzta_mvr"; label?: string }) {
   const { refresh, refreshing } = useRefresh();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1121,7 +1253,7 @@ export function CopyButton({ text }: { text: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
-      className="text-[11px] text-brand-600 hover:underline"
+      className="shrink-0 text-xs font-medium text-brand-600 hover:underline"
       onClick={async () => {
         await navigator.clipboard.writeText(text);
         setDone(true);

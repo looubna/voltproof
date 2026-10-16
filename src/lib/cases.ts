@@ -10,7 +10,7 @@ import { crossCheck } from "./ocr/crosscheck";
 import { ocrConfigured, runInkMarkCheck, runOcr, type OcrResult } from "./ocr/paddle";
 import { ASSESSOR_VERSION, assessClaims, type ClaimPolicy } from "./claims/assess";
 import { validateStated, CLAIM_TYPES, type ClaimProposal } from "./claims/parse";
-import { CLAIM_TYPE_LABEL, PROVENANCE_LABEL, fieldLabelInline, joinList } from "./labels";
+import { CLAIM_TYPE_LABEL, PROVENANCE_LABEL, RESOLUTION_LABEL, STATUS_LABEL, fieldLabelInline, joinList } from "./labels";
 import { decodeVin, VPIC_NAME } from "./registry/nhtsa";
 import { lookupVin11, NZTA_NAME } from "./registry/nzta";
 import { ALLOWED_TYPES, checkIntegrity, detectType } from "./integrity";
@@ -41,8 +41,25 @@ function now() {
   return new Date().toISOString();
 }
 
-function event(actor: string, type: string, detail: string, at = now()): AuditEvent {
-  return { at, actor, type, detail };
+/** An audit event: `detail` in plain words; model names, versions and hashes go in `technical`. */
+function event(actor: string, type: string, detail: string, extra: { at?: string; technical?: string } = {}): AuditEvent {
+  return { at: extra.at ?? now(), actor, type, detail, ...(extra.technical ? { technical: extra.technical } : {}) };
+}
+
+const STATUS_COUNT_WORD: Record<string, [string, string]> = {
+  conflict: ["conflict", "conflicts"],
+  unknown: ["unknown", "unknown"],
+  consistent: ["consistent", "consistent"],
+  verified: ["verified", "verified"],
+};
+
+/** "2 conflicts, 1 unknown, 6 consistent", most urgent first. */
+function statusCounts(findings: { status: string }[]) {
+  return Object.keys(STATUS_COUNT_WORD)
+    .map((k) => [k, findings.filter((f) => f.status === k).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} ${STATUS_COUNT_WORD[k][n === 1 ? 0 : 1]}`)
+    .join(", ");
 }
 
 function safeName(name: string) {
@@ -82,8 +99,7 @@ export function evaluateRules(c: Case, trigger: string, actor: string) {
   const findings = [...claimFindings, ...ruleFindings];
   c.ruleRuns.push({ id: randomUUID(), at: now(), rulesVersion: RULES_VERSION, assessorVersion: ASSESSOR_VERSION, trigger, findings });
   if (c.ruleRuns.length > MAX_RULE_RUNS) c.ruleRuns = c.ruleRuns.slice(-MAX_RULE_RUNS);
-  const counts = findings.reduce<Record<string, number>>((a, f) => ((a[f.status] = (a[f.status] ?? 0) + 1), a), {});
-  c.events.push(event(actor, "rules_run", `Rules ${RULES_VERSION} ran (${trigger}): ${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ")}.`));
+  c.events.push(event(actor, "rules_run", `Checks updated (${trigger}): ${statusCounts(findings) || "no findings"}.`, { technical: `Rules ${RULES_VERSION}, claim assessor ${ASSESSOR_VERSION}` }));
 }
 
 // ---------------------------------------------------------------- synthetic cases
@@ -110,7 +126,7 @@ async function buildSampleCase(sc: SampleCase): Promise<Case> {
     })),
     ruleRuns: [],
     reviews: [],
-    events: [event("VoltProof demo seed", "case_created", "Synthetic demonstration case created. All documents and data are fictional.", sc.createdAt)],
+    events: [event("VoltProof demo seed", "case_created", "Demo case created. All documents and data are fictional.", { at: sc.createdAt })],
   };
   for (const sd of sc.docs) {
     const buf = await readSampleFile(sd);
@@ -141,7 +157,7 @@ async function buildSampleCase(sc: SampleCase): Promise<Case> {
       extractionHistory: [],
       forensics,
     });
-    c.events.push(event("VoltProof demo seed", "document_added", `${sd.filename} added; extraction loaded from demo fixture (no live AI call).`, sc.createdAt));
+    c.events.push(event("VoltProof demo seed", "document_added", `${sd.filename} added (sample document; its values come with the demo, not from AI).`, { at: sc.createdAt, technical: "Extraction loaded from a hand-written demo fixture." }));
   }
   evaluateRules(c, "demo seed", "system");
   return c;
@@ -171,7 +187,7 @@ export async function resetSampleCase(id: string, actor: string) {
   const sc = SAMPLE_CASES.find((s) => s.id === id);
   if (!sc) throw new UserError("Only synthetic demonstration cases can be reset.");
   const c = await buildSampleCase(sc);
-  c.events.push(event(actor, "case_reset", "Synthetic case reset to its original state."));
+  c.events.push(event(actor, "case_reset", "Demo case reset to its original state."));
   await getStore().putCase(c);
   return c;
 }
@@ -209,9 +225,18 @@ export async function findCasesByVin(vin: string): Promise<CaseMatch[]> {
 
 // ---------------------------------------------------------------- commands
 
-export async function createCase(input: { make: string; model: string; year: string | number | null; vin: string; allowDuplicateVin?: boolean }, actor: string) {
+const MAX_REFERENCE = 80;
+
+function cleanReference(value: unknown) {
+  const r = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  if (r.length > MAX_REFERENCE) throw new UserError(`The reference is too long (${MAX_REFERENCE} characters max).`);
+  return r || null;
+}
+
+export async function createCase(input: { make: string; model: string; year: string | number | null; vin: string; reference?: string | null; allowDuplicateVin?: boolean }, actor: string) {
   const make = input.make.trim();
   const model = input.model.trim();
+  const reference = cleanReference(input.reference);
   const vin = normalizeVin(input.vin ?? "");
   const year = input.year ? Number(input.year) : null;
   if (!make || !model) throw new UserError("Make and model are required.");
@@ -234,13 +259,14 @@ export async function createCase(input: { make: string; model: string; year: str
     caseNumber: `VP-${created.slice(0, 4)}-${String(Math.floor(1000 + Math.random() * 9000))}`,
     synthetic: false,
     vehicle,
+    reference,
     createdAt: created,
     createdBy: actor,
     documents: [],
     claims: [],
     ruleRuns: [],
     reviews: [],
-    events: [event(actor, "case_created", `Case created for ${year ?? ""} ${make} ${model}${vin ? `, VIN ${vin}` : ""}.`.replace("  ", " "))],
+    events: [event(actor, "case_created", `Case created for ${year ?? ""} ${make} ${model}${vin ? `, VIN ${vin}` : ""}${reference ? ` (${reference})` : ""}.`.replace("  ", " "))],
   };
   evaluateRules(c, "case created", "system");
   await getStore().putCase(c);
@@ -280,7 +306,11 @@ export async function addDocument(caseId: string, file: { name: string; data: Bu
   await getStore().updateCase(caseId, (c) => {
     const dup = c.documents.find((d) => d.integrity.sha256 === integrity.sha256);
     c.documents.push(doc);
-    c.events.push(event(actor, "document_added", `${doc.filename} uploaded (${prov.replace(/_/g, " ")}); SHA-256 ${integrity.sha256.slice(0, 12)}…${dup ? ` — identical to ${dup.filename} already on file` : ""}.`));
+    c.events.push(
+      event(actor, "document_added", `${doc.filename} uploaded (${PROVENANCE_LABEL[prov].toLowerCase()}).${dup ? ` It is identical to ${dup.filename}, already on file.` : ""}`, {
+        technical: `SHA-256 ${integrity.sha256.slice(0, 12)}…`,
+      }),
+    );
   });
   return doc;
 }
@@ -303,6 +333,18 @@ export async function setDocumentProvenance(caseId: string, docId: string, prove
     d.provenance = prov;
     c.events.push(event(actor, "document_source_changed", `${d.filename}: source changed from “${PROVENANCE_LABEL[was]}” to “${PROVENANCE_LABEL[prov]}”.`));
     evaluateRules(c, `document source changed: ${d.filename}`, "system");
+  });
+}
+
+/** Sets or clears the reviewer's own label for a case (stock number, seller name). */
+export async function setCaseReference(caseId: string, value: unknown, actor: string) {
+  const reference = cleanReference(value);
+  await ensureSeeded();
+  if (!(await getStore().getCase(caseId))) throw new UserError("Case not found.", 404);
+  return getStore().updateCase(caseId, (c) => {
+    if ((c.reference ?? null) === reference) return;
+    c.reference = reference;
+    c.events.push(event(actor, "reference_changed", reference ? `Reference set to “${reference}”.` : "Reference removed."));
   });
 }
 
@@ -524,7 +566,10 @@ export async function processDocument(caseId: string, docId: string, actor: stri
     d.sampleId = sampleId;
     if (forensics) d.forensics = forensics;
     const found = forensics?.indicators.filter((i) => i.severity === "potential").length ?? 0;
-    c.events.push(event(actor, "document_extracted", `${d.filename}: ${detail}${found ? ` Forensic checks found ${found} possible sign${found === 1 ? "" : "s"} of editing.` : ""}`));
+    const outcome = status === "extracted" ? "was read and checked." : status === "not_configured" ? "was stored but not read: demo mode only reads the sample documents." : "could not be read. Try again, or check it yourself.";
+    c.events.push(
+      event(actor, "document_extracted", `${d.filename} ${outcome}${found ? ` ${found} possible sign${found === 1 ? "" : "s"} of editing found.` : ""}`, { technical: detail }),
+    );
     evaluateRules(c, `document processed: ${d.filename}`, "system");
   });
 }
@@ -551,7 +596,7 @@ export async function addReview(caseId: string, findingId: string, input: { reso
       reviewer: actor,
       at: now(),
     });
-    c.events.push(event(actor, "review_recorded", `${f.title}: marked ${input.resolution.replace(/_/g, " ")}. Machine finding (${f.status}) unchanged.`));
+    c.events.push(event(actor, "review_recorded", `${f.title}: marked “${RESOLUTION_LABEL[input.resolution as Resolution]}”. The check's own result (${STATUS_LABEL[f.status]}) is kept.`));
   });
 }
 
