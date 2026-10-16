@@ -26,7 +26,7 @@ from voltproof_agent.workflow import build_workflow, model_name
 logging.basicConfig(level=logging.INFO, format='{"severity":"%(levelname)s","message":%(message)r}')
 app = FastAPI(title="VoltProof evidence agent", version="1.0.0")
 APP_NAME = "voltproof_evidence_agent"
-RUN_TIMEOUT_S = float(os.environ.get("AGENT_RUN_TIMEOUT_S", "150"))
+RUN_TIMEOUT_S = float(os.environ.get("AGENT_RUN_TIMEOUT_S", "270"))
 
 
 class InvestigateRequest(BaseModel):

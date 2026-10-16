@@ -62,6 +62,16 @@ function checkPlain(value: string, ocr: OcrResult): SecondRead {
   return { engine: "paddleocr", result: want && hay.includes(want) ? "agree" : "not_found" };
 }
 
+/** ISO date against the ways people write it by hand: 12/07/2026, 07/12/2026, 2026.07.12, 12-07-26. */
+function checkDate(iso: string, ocr: OcrResult): SecondRead {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return checkPlain(iso, ocr);
+  const [, y, mo, d] = m;
+  const forms = [y + mo + d, d + mo + y, mo + d + y, d + mo + y.slice(2), mo + d + y.slice(2)];
+  const lines = ocrLines(ocr).map((l) => l.text.replace(/[^0-9]/g, ""));
+  return { engine: "paddleocr", result: lines.some((t) => forms.some((f) => t.includes(f))) ? "agree" : "not_found" };
+}
+
 /** Compares identifiers with the OCR read, in place. Returns the fields where the readers disagree. */
 export function crossCheck(fields: ExtractionFields, ocr: OcrResult): FieldName[] {
   const disagreements: FieldName[] = [];
@@ -79,6 +89,6 @@ export function crossCheck(fields: ExtractionFields, ocr: OcrResult): FieldName[
   if (fields.vin?.value) apply("vin", checkVin(String(fields.vin.value), ocr));
   if (fields.odometer?.value) apply("odometer", checkOdometer(fields.odometer.value as Odometer, ocr));
   if (fields.batterySohPercent?.value !== null && fields.batterySohPercent?.value !== undefined) apply("batterySohPercent", checkPlain(`${fields.batterySohPercent.value}`, ocr));
-  if (fields.documentDate?.value) apply("documentDate", checkPlain(String(fields.documentDate.value), ocr));
+  if (fields.documentDate?.value) apply("documentDate", checkDate(String(fields.documentDate.value), ocr));
   return disagreements;
 }

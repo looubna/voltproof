@@ -119,12 +119,19 @@ export async function requestInvestigation(caseId: string, requestedBy: string) 
   if (!agentConfigured()) throw new UserError("The evidence agent is not configured on this server (AGENT_SERVICE_URL).");
   const base = process.env.AGENT_SERVICE_URL!.replace(/\/$/, "");
   const token = await idToken(base);
-  const res = await fetch(`${base}/investigate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ case_id: caseId, requested_by: requestedBy }),
-    signal: AbortSignal.timeout(170_000),
-  });
+  // The agent scales to zero; a cold start can briefly answer 429/503, so retry a few times.
+  let res: Response | null = null;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    res = await fetch(`${base}/investigate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ case_id: caseId, requested_by: requestedBy }),
+      signal: AbortSignal.timeout(290_000),
+    });
+    if (res.status !== 429 && res.status !== 503) break;
+    await new Promise((r) => setTimeout(r, 4000 * attempt));
+  }
+  if (!res) throw new UserError("The evidence agent could not be reached.");
   const data = (await res.json().catch(() => ({}))) as { error?: string; run_id?: string };
   if (!res.ok) throw new UserError(`The evidence agent failed: ${data.error ?? `HTTP ${res.status}`}`);
   return data;

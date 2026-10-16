@@ -153,3 +153,18 @@ async def test_rejects_invalid_case_ids(app):
     with pytest.raises(Exception):
         await investigate_case("../etc/passwd", build_workflow(Scripted(model="s", script=[]), Scripted(model="s", script=[])))
     assert app.calls == []
+
+
+class Failing(BaseLlm):
+    async def generate_content_async(self, llm_request: LlmRequest, stream: bool = False) -> AsyncGenerator[LlmResponse, None]:
+        raise TimeoutError("model timed out")
+        yield  # pragma: no cover
+
+
+@pytest.mark.asyncio
+async def test_model_timeouts_do_not_hang_the_run(app):
+    out = await investigate_case("demo-tampered-kona", build_workflow(Failing(model="x"), Failing(model="x")))
+    assert out["run_id"] == "run-1"
+    summaries = " ".join(s["summary"] for s in app.saved["steps"])
+    assert "did not answer (TimeoutError)" in summaries
+    assert app.saved["sellerQuestions"] == []

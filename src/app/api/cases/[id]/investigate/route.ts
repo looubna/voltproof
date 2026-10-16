@@ -4,7 +4,7 @@ import { route } from "@/lib/api";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export const maxDuration = 180;
+export const maxDuration = 300;
 
 /** "Run evidence agent": a reviewer asks the ADK agent to investigate this case. */
 export const POST = route<Ctx>(async (_req, ctx, user) => {

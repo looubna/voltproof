@@ -93,6 +93,14 @@ function ExtractedFields({ caseId, doc, canReread }: { caseId: string; doc: Case
                       </Link>
                       {f.quote ? <q className="italic text-muted">{f.quote}</q> : <span className="text-conflict-fg">No quote</span>}
                       {f.grounded ? <GroundingTag g={f.grounded} /> : null}
+                      {f.secondRead ? (
+                        <span
+                          title="A second, independent OCR engine (PaddleOCR) read the same document."
+                          className={`ml-1.5 inline-block whitespace-nowrap rounded-full px-1.5 py-px text-[10px] font-semibold not-italic ${f.secondRead.result === "agree" ? "bg-verified-bg text-verified-fg" : f.secondRead.result === "disagree" ? "bg-conflict-bg text-conflict-fg" : "bg-unknown-bg text-unknown-fg"}`}
+                        >
+                          {f.secondRead.result === "agree" ? "PaddleOCR agrees" : f.secondRead.result === "disagree" ? `PaddleOCR read “${f.secondRead.text}”` : "PaddleOCR: not found"}
+                        </span>
+                      ) : null}
                       {f.tamperIndicator ? <div className="mt-1 rounded bg-conflict-bg px-2 py-1 not-italic text-conflict-fg">Possible edit: {f.tamperIndicator}</div> : null}
                     </td>
                     <td className="px-3 py-2 tabular-nums">{f.confidence !== null ? f.confidence.toFixed(2) : "—"}</td>

@@ -1,5 +1,5 @@
 {
-  "ranAt": "2026-10-16T11:14:38.856Z",
+  "ranAt": "2026-10-16T12:18:24.844Z",
   "aiMode": "vertex",
   "rulesVersion": "2026.10.2",
   "rules": {
@@ -158,7 +158,7 @@
     ]
   },
   "extraction": {
-    "model": "gemini-3.5-flash",
+    "model": "gemini-2.5-flash",
     "documents": 21,
     "fieldAccuracy": {
       "correct": 135,
@@ -166,30 +166,37 @@
       "rate": 1
     },
     "inventedValues": {
-      "invented": 0,
+      "invented": 5,
       "absentFieldsChecked": 117
     },
     "citationCoverage": {
-      "cited": 135,
-      "nonNull": 135,
+      "cited": 140,
+      "nonNull": 140,
       "rate": 1
     },
     "groundingRate": {
-      "grounded": 131,
-      "groundable": 131,
-      "rate": 1
+      "grounded": 133,
+      "groundable": 134,
+      "rate": 0.9925373134328358
     },
-    "injectionResisted": true,
+    "injectionResisted": false,
     "latencyMs": {
-      "p50": 10056,
-      "p95": 54870
+      "p50": 6314,
+      "p95": 8185
     },
     "tokens": {
-      "input": 109341,
-      "output": 17807,
-      "perDocument": 6055
+      "input": 75609,
+      "output": 17494,
+      "perDocument": 4433
     },
-    "errors": []
+    "errors": [
+      "id3-service-invoice-2025-06.pdf batterySohPercent: expected none, got 99",
+      "kona-battery-report.pdf batterySohPercent: quote not found in the PDF text",
+      "kia-ev6-service-invoice-2026-03.pdf batteryTestProvider: expected none, got \"Northgate EV Service\"",
+      "kia-ev6-dashboard-photo.png issuer: expected none, got \"Dealer\"",
+      "ioniq5-dashboard-photo.png issuer: expected none, got \"Dealer\"",
+      "model3-dashboard-photo.png issuer: expected none, got \"Dealer\""
+    ]
   },
   "claims": {
     "fixtures": {
@@ -214,15 +221,15 @@
       ]
     },
     "live": {
-      "correct": 14,
+      "correct": 13,
       "total": 14,
-      "rate": 1,
+      "rate": 0.9285714285714286,
       "rows": [
         "✓ VP-2026-0104 battery_soh: expected verified, got verified",
         "✓ VP-2026-0104 odometer: expected consistent, got consistent",
         "✓ VP-2026-0104 accident_history: expected conflict, got conflict",
         "✓ VP-2026-0104 fast_charging: expected unknown, got unknown",
-        "✓ VP-2026-0105 battery_soh: expected conflict, got conflict",
+        "✗ VP-2026-0105 battery_soh: expected conflict, got unknown",
         "✓ VP-2026-0105 odometer: expected conflict, got conflict",
         "✓ VP-2026-0105 accident_history: expected unknown, got unknown",
         "✓ VP-2026-0101 odometer: expected verified, got verified",

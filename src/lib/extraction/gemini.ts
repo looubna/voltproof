@@ -39,6 +39,7 @@ export async function callGemini<T>(
       const response = await ai.models.generateContent({
         model,
         contents: [{ role: "user", parts }],
+        // Default thinking: measured live, a LOW thinking level cut field accuracy from 135/135 to 128/135.
         config: { temperature: 0, ...config, abortSignal: AbortSignal.timeout(cfg.geminiTimeoutMs) },
       });
       const text = response.text;

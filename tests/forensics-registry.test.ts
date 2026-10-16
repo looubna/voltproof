@@ -163,6 +163,11 @@ describe("second OCR read", () => {
     expect(fields.vin.secondRead?.result).toBe("agree");
     expect(fields.odometer.secondRead?.result).toBe("agree");
   });
+  it("matches handwritten date formats", () => {
+    const fields = fieldsWith({ documentDate: "2026-07-12" });
+    crossCheck(fields, ocr(["Date: 12/07/2026"]));
+    expect(fields.documentDate.secondRead?.result).toBe("agree");
+  });
   it("sends a disagreement to review", () => {
     const fields = fieldsWith({ vin: "KNDC3DLC5N5098213", odometer: { reading: 31210, unit: "km" } });
     expect(crossCheck(fields, ocr(["VIN KNDC3DLC5N5098218", "ODO 081210 km"]))).toEqual(["vin", "odometer"]);
