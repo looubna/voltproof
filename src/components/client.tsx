@@ -130,7 +130,7 @@ export function FilePicker({ files, setFiles, maxMb, disabled }: { files: Pendin
       </label>
       <ErrorNote error={error} />
       {files.length > 0 && (
-        <ul className="divide-y divide-line rounded-xl border border-line bg-white">
+        <ul className="divide-y divide-line rounded-xl border border-line bg-[#fdfcfa]">
           {files.map((p, i) => (
             <li key={i} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
               <div className="min-w-0 flex-1">
@@ -376,7 +376,7 @@ export function ReviewForm({ caseId, findingId, reviewer }: { caseId: string; fi
       <fieldset className="grid gap-2 sm:grid-cols-3">
         <legend className="sr-only">Resolution</legend>
         {RESOLUTIONS.map((r) => (
-          <label key={r.value} className={`cursor-pointer rounded-lg border bg-white p-2.5 text-sm ${resolution === r.value ? "border-brand-600 ring-1 ring-brand-600" : "border-line"}`}>
+          <label key={r.value} className={`cursor-pointer rounded-lg border bg-[#fdfcfa] p-2.5 text-sm ${resolution === r.value ? "border-brand-600 ring-1 ring-brand-600" : "border-line"}`}>
             <input type="radio" name={`res-${findingId}`} value={r.value} checked={resolution === r.value} onChange={() => setResolution(r.value)} className="sr-only" />
             <span className="font-medium">{r.label}</span>
             <span className="mt-0.5 block text-xs text-muted">{r.hint}</span>
@@ -838,7 +838,7 @@ export function DemoRequestForm() {
   const [error, setError] = useState<string | null>(null);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value });
   if (state === "done") return <p className="rounded-lg bg-[#e6f4ee] px-4 py-3 text-sm font-medium text-[#1f6b50]">Thanks. We'll be in touch to arrange your demo.</p>;
-  const field = "w-full rounded-lg border border-[#d9d5cb] bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#1f6b50]";
+  const field = "w-full rounded-lg border border-[#d9d5cb] bg-[#fdfcfa] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#1f6b50]";
   return (
     <form
       className="grid gap-4"

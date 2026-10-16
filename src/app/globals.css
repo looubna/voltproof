@@ -4,18 +4,18 @@
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, monospace;
 
-  --color-navy-950: #0a1628;
-  --color-navy-900: #0f1f38;
-  --color-navy-800: #17305a;
-  --color-brand-700: #1d4a9e;
-  --color-brand-600: #2458c4;
-  --color-brand-500: #3a6fdc;
-  --color-brand-100: #e4ecfb;
-  --color-brand-50: #f3f7fe;
-  --color-ink: #13213a;
-  --color-muted: #5a6780;
-  --color-line: #dfe5ef;
-  --color-canvas: #f6f8fb;
+  --color-navy-950: #0f1c2b;
+  --color-navy-900: #14263a;
+  --color-navy-800: #1d3550;
+  --color-brand-700: #17553f;
+  --color-brand-600: #1f6b50;
+  --color-brand-500: #2f8a68;
+  --color-brand-100: #dcf2e8;
+  --color-brand-50: #eef7f2;
+  --color-ink: #0f1c2b;
+  --color-muted: #5b6672;
+  --color-line: #e0ddd4;
+  --color-canvas: #f3f1ec;
 
   --color-verified-bg: #e2f3ea;
   --color-verified-fg: #135e3b;
@@ -42,7 +42,7 @@ body {
 }
 
 .card {
-  background: white;
+  background: #fdfcfa;
   border: 1px solid var(--color-line);
   border-radius: 12px;
 }
@@ -69,8 +69,8 @@ body {
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .btn-primary { background: var(--color-brand-600); color: white; }
 .btn-primary:hover:not(:disabled) { background: var(--color-brand-700); }
-.btn-secondary { background: white; color: var(--color-ink); border: 1px solid var(--color-line); }
-.btn-secondary:hover:not(:disabled) { border-color: #b9c4d6; background: var(--color-brand-50); }
+.btn-secondary { background: #fdfcfa; color: var(--color-ink); border: 1px solid var(--color-line); }
+.btn-secondary:hover:not(:disabled) { border-color: #cfcabd; background: var(--color-brand-50); }
 
 .input {
   width: 100%;

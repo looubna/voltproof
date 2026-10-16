@@ -20,7 +20,7 @@ const SUMMARY_ORDER = ["vin-consistency", "vin-structure", "registration-consist
 function DecisionImpact({ c }: { c: Case }) {
   const { open, resolved } = decisionImpactItems(c);
   return (
-    <section className="overflow-hidden rounded-xl border border-navy-900 bg-white">
+    <section className="overflow-hidden rounded-xl border border-navy-900 bg-[#fdfcfa]">
       <header className="bg-navy-950 px-5 py-4 text-white">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-lg font-semibold">

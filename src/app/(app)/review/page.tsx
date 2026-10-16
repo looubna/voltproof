@@ -34,10 +34,10 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
       )}
 
       <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
-        <Link href={base} className={`rounded-full px-3 py-1 ${!showAll ? "bg-brand-600 text-white" : "bg-white text-muted ring-1 ring-line"}`}>
+        <Link href={base} className={`rounded-full px-3 py-1 ${!showAll ? "bg-brand-600 text-white" : "bg-[#fdfcfa] text-muted ring-1 ring-line"}`}>
           Open items
         </Link>
-        <Link href={`${base}${sep}show=all`} className={`rounded-full px-3 py-1 ${showAll ? "bg-brand-600 text-white" : "bg-white text-muted ring-1 ring-line"}`}>
+        <Link href={`${base}${sep}show=all`} className={`rounded-full px-3 py-1 ${showAll ? "bg-brand-600 text-white" : "bg-[#fdfcfa] text-muted ring-1 ring-line"}`}>
           All review items
         </Link>
         <span className="ml-2 text-muted">

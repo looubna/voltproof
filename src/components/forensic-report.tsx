@@ -25,7 +25,7 @@ export function ForensicReportCard({ c, report, showDocLink = true }: { c: Case;
   const doc = c.documents.find((d) => d.id === report.documentId);
   const heatmap = doc?.forensics?.heatmapKey ? `/api/cases/${c.id}/documents/${report.documentId}/file?view=heatmap` : null;
   return (
-    <article className="overflow-hidden rounded-xl border border-conflict-dot/40 bg-white">
+    <article className="overflow-hidden rounded-xl border border-conflict-dot/40 bg-[#fdfcfa]">
       <header className="flex flex-wrap items-start justify-between gap-2 border-b border-line bg-conflict-bg/40 px-5 py-3">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wide text-conflict-fg">Falsification analysis</div>
