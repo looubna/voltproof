@@ -461,6 +461,14 @@ const CLAIM_FIELDS: Record<Claim["type"], FieldName[]> = {
 
 /** A value this claim depends on that a forensic check says may have been edited. */
 function tamperedEvidence(claim: Claim, input: RuleInput) {
+  // The battery report itself shows signs of editing, even if no figure could be read from it.
+  if (claim.type === "battery_soh") {
+    for (const doc of readDocs(input.documents).filter(isBatteryReport)) {
+      const flag = (doc.forensics?.indicators ?? []).find((i) => i.severity === "potential" && (i.code === "text_overlaps_text" || i.code === "signature_broken"));
+      const field = doc.extraction?.fields.batterySohPercent;
+      if (flag && !field?.tamperIndicator) return { doc, field: "batterySohPercent" as FieldName, message: flag.message };
+    }
+  }
   for (const doc of readDocs(input.documents)) {
     if (claim.type === "battery_soh" && !isBatteryReport(doc)) continue;
     for (const f of CLAIM_FIELDS[claim.type]) {

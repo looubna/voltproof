@@ -51,6 +51,9 @@ export function AgentCard({ c, configured }: { c: Case; configured: boolean }) {
       {!configured && <p className="px-5 py-3 text-xs text-muted">Not configured on this server (AGENT_SERVICE_URL).</p>}
       {run ? (
         <div className="grid gap-4 px-5 py-4">
+          <Link href={`/cases/${c.id}/agent`} className="btn btn-secondary justify-self-start">
+            See exactly what the agent did{run.forensicReport?.length ? ` and the falsification analysis (${run.forensicReport.length} document${run.forensicReport.length === 1 ? "" : "s"})` : ""} →
+          </Link>
           <p className="text-xs text-muted">
             Last run {fmtDateTime(run.finishedAt)} · {run.model}
             {run.model === "offline-demo-planner" ? " (offline stand-in, not Gemini)" : ""} · agent {run.agentVersion} · {run.steps.length} steps

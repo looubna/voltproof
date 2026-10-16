@@ -39,9 +39,24 @@ def before_tool(tool: BaseTool, args: dict[str, Any], tool_context: ToolContext)
     return None
 
 
+def _result_summary(name: str, r: dict) -> str:
+    if r.get("error"):
+        return f"→ {r['error']}"
+    if name == "explain_finding":
+        f = r.get("finding", {})
+        return f"→ {f.get('title')}: {f.get('status')}. {str(f.get('result', ''))[:300]}"
+    if name == "document_checks":
+        d = r.get("document", {})
+        flags = "; ".join(i.get("code", "") + (f" on {i['field']}" if i.get("field") else "") for i in d.get("forensicIndicators", []))
+        sigs = ", ".join(s.get("integrity", "") for s in d.get("signatures", []))
+        return f"→ {d.get('filename')} ({d.get('type')}, {d.get('provenance')}): read {d.get('extractionStatus')}; forensic flags: {flags or 'none'}; signatures: {sigs or 'none'}"
+    if name == "recheck_document":
+        return f"→ re-read finished ({r.get('status')}). {r.get('claimSummary') or ''}"
+    return "→ done"
+
+
 def after_tool(tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, tool_response: Any) -> dict | None:
-    if isinstance(tool_response, dict) and tool_response.get("error"):
-        add_step(tool_context.state, "investigator", "tool_call", f"{tool.name} → {tool_response['error']}", tool.name)
-    elif tool.name == "recheck_document" and isinstance(tool_response, dict):
-        add_step(tool_context.state, "investigator", "check", f"Re-checked document {args.get('document_id')}: {tool_response.get('status')}. {tool_response.get('claimSummary') or ''}", tool.name)
+    if isinstance(tool_response, dict):
+        kind = "check" if tool.name == "recheck_document" and not tool_response.get("error") else "tool_call"
+        add_step(tool_context.state, "investigator", kind, f"{tool.name} result", tool.name, detail=_result_summary(tool.name, tool_response))
     return None

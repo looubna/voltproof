@@ -73,6 +73,29 @@ describe("agent runs", () => {
     expect(JSON.stringify((await import("@/lib/derive")).currentFindings(after).map((f) => [f.id, f.status]))).toBe(before);
   });
 
+  it("keeps forensic explanations only for indicators the checks raised", async () => {
+    const c = (await getCase("demo-tampered-kona"))!;
+    const battery = c.documents.find((d) => d.filename === "kona-battery-report.pdf")!;
+    const f = (code: string, text = "The visible value sits on top of other text.") => ({ indicatorCode: code, field: "batterySohPercent", whatWasFound: text, whatYouCanSee: "Nothing visible.", howSuchEditsAreMade: "A white box and new text.", innocentExplanations: "Rare.", whatToRequest: "The original report." });
+    const run = await saveAgentRun(c.id, {
+      startedAt: new Date().toISOString(),
+      model: "gemini-2.5-flash",
+      agentVersion: "test",
+      steps: [{ node: "forensic_analyst", kind: "analysis", model: "gemini-2.5-pro", ms: 21000, summary: "explained" }],
+      reviewerSummary: [],
+      sellerQuestions: [],
+      issuerRequests: [],
+      forensicReport: [
+        { documentId: battery.id, filename: "x", model: "gemini-2.5-pro", summary: "Changed after issue.", limitations: "Cannot tell who.", findings: [f("text_overlaps_text"), f("jpeg_ghost_mismatch"), f("signature_broken", "This is a forgery.")] },
+        { documentId: "nope", filename: "y", model: "gemini-2.5-pro", summary: "s", limitations: "l", findings: [f("text_overlaps_text")] },
+      ],
+    });
+    expect(run.forensicReport).toHaveLength(1);
+    expect(run.forensicReport![0].filename).toBe("kona-battery-report.pdf");
+    expect(run.forensicReport![0].findings.map((x) => x.indicatorCode)).toEqual(["text_overlaps_text"]);
+    expect(run.dropped).toHaveLength(3);
+  });
+
   it("rejects malformed runs", async () => {
     await expect(saveAgentRun("demo-hero-id3", { steps: "lots" })).rejects.toThrow(/Invalid agent run/);
   });

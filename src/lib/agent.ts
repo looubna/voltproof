@@ -45,6 +45,15 @@ export function agentView(c: Case) {
       forensicIndicators: (d.forensics?.indicators ?? []).filter((i) => i.severity === "potential").map((i) => ({ code: i.code, field: i.field ?? null, message: i.message })),
       signatures: (d.forensics?.signatures ?? []).map((s) => ({ integrity: s.integrity, trustedAs: s.trustedAs, coversWholeFile: s.coversWholeFile })),
       issuerVerified: (d.verifications ?? []).some((v) => v.outcome === "confirmed"),
+      // Values read from the document, with where they were found and any forensic flag.
+      values: d.extraction
+        ? Object.fromEntries(
+            Object.entries(d.extraction.fields)
+              .filter(([k, f]) => f && f.value !== null && k !== "documentType")
+              .map(([k, f]) => [k, { value: f!.value, page: f!.page, quote: f!.quote, usedByChecks: f!.supported, possibleEdit: f!.tamperIndicator ?? null }]),
+          )
+        : {},
+      heatmap: !!d.forensics?.heatmapKey,
     })),
     registryChecks: (c.registryChecks ?? []).map((r) => ({ provider: r.provider, outcome: r.outcome, message: r.message, checkedAt: r.checkedAt })),
   };
@@ -55,7 +64,44 @@ const runSchema = z.object({
   startedAt: z.string().max(40),
   model: z.string().max(80),
   agentVersion: z.string().max(40),
-  steps: z.array(z.object({ node: z.string().max(60), kind: z.enum(["check", "tool_call", "decision", "draft"]), tool: z.string().max(60).optional(), summary: z.string().max(600) })).max(60),
+  steps: z
+    .array(
+      z.object({
+        node: z.string().max(60),
+        kind: z.enum(["check", "tool_call", "decision", "draft", "model_call", "analysis"]),
+        tool: z.string().max(60).optional(),
+        model: z.string().max(60).optional(),
+        ms: z.number().int().min(0).max(600_000).optional(),
+        summary: z.string().max(600),
+        detail: z.string().max(1500).optional(),
+      }),
+    )
+    .max(80),
+  forensicReport: z
+    .array(
+      z.object({
+        documentId: z.string().max(120),
+        filename: z.string().max(200),
+        model: z.string().max(60),
+        summary: z.string().max(1500),
+        findings: z
+          .array(
+            z.object({
+              indicatorCode: z.string().max(60),
+              field: z.string().max(60).nullable(),
+              whatWasFound: z.string().max(1500),
+              whatYouCanSee: z.string().max(1500),
+              howSuchEditsAreMade: z.string().max(1500),
+              innocentExplanations: z.string().max(1500),
+              whatToRequest: z.string().max(1500),
+            }),
+          )
+          .max(10),
+        limitations: z.string().max(800),
+      }),
+    )
+    .max(5)
+    .default([]),
   reviewerSummary: z.array(cited).max(5),
   sellerQuestions: z.array(cited).max(8),
   issuerRequests: z.array(cited.extend({ documentId: z.string().max(120), to: z.string().max(200), subject: z.string().max(200) })).max(5),
@@ -80,6 +126,21 @@ export async function saveAgentRun(caseId: string, body: unknown) {
       if (why) dropped.push(`${label}: “${t.text.slice(0, 80)}” (${why})`);
       return !why;
     });
+  // Forensic explanations must refer to a document on this case and to indicators its checks raised.
+  const forensicReport = run.forensicReport.flatMap((r) => {
+    const doc = c.documents.find((d) => d.id === r.documentId);
+    if (!doc) {
+      dropped.push(`Forensic report for unknown document ${r.documentId}`);
+      return [];
+    }
+    const codes = new Set([...(doc.forensics?.indicators ?? []).map((i) => i.code), ...((doc.forensics?.signatures ?? []).some((x) => x.integrity === "invalid") ? ["signature_broken"] : [])]);
+    const findings = r.findings.filter((f) => {
+      const why = !codes.has(f.indicatorCode) ? "unknown indicator" : /\b(forged|forgery|fake|fraud|fraudulent)\b/i.test(Object.values(f).join(" ")) ? "verdict language" : null;
+      if (why) dropped.push(`Forensic explanation of ${f.indicatorCode} on ${doc.filename} (${why})`);
+      return !why;
+    });
+    return findings.length ? [{ ...r, filename: doc.filename, findings }] : [];
+  });
   const record: AgentRun = {
     id: randomUUID(),
     startedAt: run.startedAt,
@@ -90,6 +151,7 @@ export async function saveAgentRun(caseId: string, body: unknown) {
     reviewerSummary: keep("Summary", run.reviewerSummary),
     sellerQuestions: keep("Seller question", run.sellerQuestions),
     issuerRequests: keep("Issuer request", run.issuerRequests, (t) => (docIds.has(t.documentId) ? null : "names an unknown document")),
+    forensicReport,
     dropped,
     by: AGENT_ACTOR,
   };

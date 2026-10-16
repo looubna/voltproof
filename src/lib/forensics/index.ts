@@ -5,7 +5,12 @@ import { analyzeJpegGhost } from "./jpeg-ghost";
 import { analyzePdfLayer, readPdfLayer } from "./pdf-text";
 import { checkPdfSignatures } from "./signature";
 
-export async function analyzeDocument(file: Buffer, mimeType: string, fields: ExtractionFields | null): Promise<DocumentForensics> {
+/** Images produced by the checks, for the reviewer. Stored next to the file by the caller. */
+export interface ForensicArtifacts {
+  heatmap?: Buffer;
+}
+
+export async function analyzeDocument(file: Buffer, mimeType: string, fields: ExtractionFields | null, artifacts: ForensicArtifacts = {}): Promise<DocumentForensics> {
   const methods: ForensicMethod[] = [];
   const result: DocumentForensics = { checkedAt: new Date().toISOString(), methods, indicators: [], signatures: [] };
   try {
@@ -27,6 +32,7 @@ export async function analyzeDocument(file: Buffer, mimeType: string, fields: Ex
     } else if (mimeType === "image/jpeg" && fields) {
       const g = await analyzeJpegGhost(file, fields);
       if (g.primaryQuality !== null) methods.push("jpeg_ghost");
+      if (g.indicators.length && g.heatmap) artifacts.heatmap = g.heatmap;
       result.indicators.push(...g.indicators);
     }
   } catch (e) {

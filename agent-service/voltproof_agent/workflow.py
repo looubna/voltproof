@@ -36,6 +36,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.workflow import DEFAULT_ROUTE, JoinNode
 from google.genai import types
 
+from . import forensic_analyst
 from .app_client import AppError, get_app
 from .guardrails import after_tool, before_tool
 from .schemas import Drafts, InvestigationOutcome
@@ -130,7 +131,8 @@ async def open_items(ctx, node_input: Any):
     ctx.state["open_items_text"] = compact(items)
     ctx.state["documents_text"] = compact(docs)
     add_step(ctx.state, "open_items", "check", f"Round {ctx.state['round']}: {len(items)} open item(s).")
-    return len(items)
+    # The next node is the investigator: its input message is this instruction.
+    return f"Investigate the {len(items)} open item(s) listed in your instructions and decide whether any document should be re-checked."
 
 
 def route_round(ctx, node_input: InvestigationOutcome):
@@ -140,6 +142,16 @@ def route_round(ctx, node_input: InvestigationOutcome):
         yield Event(route="again")
     else:
         yield Event(output="done")
+
+
+async def forensic_analysis(ctx, node_input: Any):
+    """Gemini Pro explains every document the checks flagged as possibly edited."""
+    view = await get_app().agent_view(ctx.state["case_id"])
+    ctx.state["view"] = view
+    reports, dropped = await forensic_analyst.analyse(ctx.state)
+    ctx.state["forensic_report"] = reports
+    ctx.state["forensic_dropped"] = dropped
+    return len(reports)
 
 
 async def prepare_drafting(ctx, node_input: Any):
@@ -156,10 +168,11 @@ async def prepare_drafting(ctx, node_input: Any):
                 if f["status"] in ("conflict", "unknown") and f["category"] != "authenticity" or f["id"] == "authenticity"
             ],
             "documents": [{"id": d["id"], "filename": d["filename"], "type": d["type"], "provenance": d["provenance"], "issuerVerified": d["issuerVerified"]} for d in view["documents"]],
+            "forensicAnalysis": [{"documentId": r["documentId"], "filename": r["filename"], "summary": r["summary"], "whatToRequest": [f["whatToRequest"] for f in r["findings"]]} for r in ctx.state.get("forensic_report", [])],
         },
         9000,
     )
-    return "ready"
+    return "Write the reviewer summary, seller questions and issuer requests for this case."
 
 
 def validate_drafts(ctx, node_input: Drafts):
@@ -186,13 +199,15 @@ def validate_drafts(ctx, node_input: Drafts):
 
 
 async def publish_run(ctx, node_input: dict[str, Any]):
-    steps = [{k: v for k, v in s.items() if k in ("node", "kind", "tool", "summary")} for s in sorted(ctx.state.get("trace", []), key=lambda s: s["at"])]
+    steps = [{k: v for k, v in s.items() if k in ("node", "kind", "tool", "summary", "model", "ms", "detail")} for s in sorted(ctx.state.get("trace", []), key=lambda s: s["at"])]
     run = {
         "startedAt": ctx.state.get("started_at"),
         "model": ctx.state.get("model_name", model_name()),
         "agentVersion": AGENT_VERSION,
-        "steps": steps[:60],
+        "steps": steps[:80],
+        "forensicReport": ctx.state.get("forensic_report", []),
         **node_input,
+        "dropped": node_input["dropped"] + ctx.state.get("forensic_dropped", []),
     }
     saved = await get_app().save_run(ctx.state["case_id"], run)
     yield Event(output={"run_id": saved.get("id"), "steps": len(steps), "dropped": node_input["dropped"]})
@@ -270,6 +285,28 @@ def _fallback(node: str, payload: dict):
     return on_error
 
 
+def _log_model_calls(node: str):
+    """Records every Gemini call: model, duration, and what it decided."""
+
+    def before(callback_context: CallbackContext, llm_request: LlmRequest):
+        callback_context.state[f"_t_{node}"] = time.time()
+        return None
+
+    def after(callback_context: CallbackContext, llm_response: LlmResponse):
+        started = callback_context.state.get(f"_t_{node}") or time.time()
+        parts = llm_response.content.parts if llm_response.content and llm_response.content.parts else []
+        calls = [p.function_call for p in parts if p.function_call]
+        if calls:
+            decided = "decided to call " + ", ".join(f"{c.name}({', '.join(f'{k}={str(v)[:40]}' for k, v in (c.args or {}).items())})" for c in calls)
+        else:
+            text = "".join(p.text or "" for p in parts)
+            decided = "returned its structured answer" if text.strip().startswith("{") else "answered"
+        add_step(callback_context.state, node, "model_call", f"Gemini {decided}", model=model_name(), ms=int((time.time() - started) * 1000))
+        return None
+
+    return before, after
+
+
 def build_workflow(investigator_model: str | BaseLlm | None = None, drafter_model: str | BaseLlm | None = None) -> Workflow:
     investigator = Agent(
         name="investigator",
@@ -279,6 +316,8 @@ def build_workflow(investigator_model: str | BaseLlm | None = None, drafter_mode
         output_schema=InvestigationOutcome,
         before_tool_callback=before_tool,
         after_tool_callback=after_tool,
+        before_model_callback=_log_model_calls("investigator")[0],
+        after_model_callback=_log_model_calls("investigator")[1],
         on_model_error_callback=_fallback("investigator", {"rechecked_documents": [], "notes": ["The investigator model did not answer; the checks already run stand."], "another_round": False}),
         generate_content_config=_model_config(0),
     )
@@ -287,6 +326,8 @@ def build_workflow(investigator_model: str | BaseLlm | None = None, drafter_mode
         model=drafter_model or default_model(),
         instruction=DRAFTER_INSTRUCTION,
         output_schema=Drafts,
+        before_model_callback=_log_model_calls("drafter")[0],
+        after_model_callback=_log_model_calls("drafter")[1],
         on_model_error_callback=_fallback("drafter", {"reviewer_summary": [], "seller_questions": [], "issuer_requests": []}),
         generate_content_config=_model_config(0.2),
     )
@@ -294,7 +335,8 @@ def build_workflow(investigator_model: str | BaseLlm | None = None, drafter_mode
         name="voltproof_evidence_agent",
         edges=[
             ("START", load_case, (vin_decode, nz_register), reference_checks, record_checks, open_items, investigator, route_round),
-            (route_round, {"again": open_items, DEFAULT_ROUTE: prepare_drafting}),
+            (route_round, {"again": open_items, DEFAULT_ROUTE: forensic_analysis}),
+            (forensic_analysis, prepare_drafting),
             (prepare_drafting, drafter, validate_drafts, publish_run),
         ],
     )

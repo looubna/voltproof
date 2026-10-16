@@ -59,6 +59,17 @@ class AppClient:
     async def recheck_document(self, case_id: str, document_id: str) -> dict:
         return await self._call("POST", f"/api/cases/{self._check_id(case_id, 'case id')}/documents/{self._check_id(document_id, 'document id')}/process", {})
 
+    async def get_file(self, case_id: str, document_id: str) -> tuple[bytes, str]:
+        """The original file, so the forensic analyst model can look at a flagged document."""
+        path = f"/api/cases/{self._check_id(case_id, 'case id')}/documents/{self._check_id(document_id, 'document id')}/file"
+        async with self._client() as c:
+            r = await c.get(path)
+        if r.status_code >= 400:
+            raise AppError(f"File download failed: HTTP {r.status_code}")
+        if len(r.content) > 15 * 1024 * 1024:
+            raise AppError("File too large to analyse.")
+        return r.content, r.headers.get("content-type", "application/octet-stream").split(";")[0]
+
     async def save_run(self, case_id: str, run: dict) -> dict:
         return await self._call("POST", f"/api/cases/{self._check_id(case_id, 'case id')}/agent-runs", run)
 

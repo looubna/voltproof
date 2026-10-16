@@ -19,9 +19,11 @@ export function isAgentRequest(req: Request | { headers: Headers }) {
   return h.startsWith("Bearer ") && constantTimeEqual(h.slice(7), token);
 }
 
-/** API paths the agent may call. It can read a case, run reference checks, re-check a document and store its run. */
+/** API paths the agent may call. It can read a case and its files, run reference checks, re-check a document and store its run. */
 export const AGENT_ROUTES: { method: string; pattern: RegExp }[] = [
   { method: "GET", pattern: /^\/api\/cases\/[\w-]+\/agent-view$/ },
+  // Read a document's file, so the forensic analyst model can look at a flagged document.
+  { method: "GET", pattern: /^\/api\/cases\/[\w-]+\/documents\/[\w-]+\/file$/ },
   { method: "POST", pattern: /^\/api\/cases\/[\w-]+\/registry$/ },
   { method: "POST", pattern: /^\/api\/cases\/[\w-]+\/documents\/[\w-]+\/process$/ },
   { method: "POST", pattern: /^\/api\/cases\/[\w-]+\/agent-runs$/ },

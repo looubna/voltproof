@@ -5,7 +5,7 @@ import { getConfig } from "./config";
 import { findSampleByHash, fixtureExtraction, readSampleFile } from "./extraction/demo";
 import { extractWithGemini } from "./extraction/gemini";
 import { groundExtraction } from "./extraction/grounding";
-import { analyzeDocument } from "./forensics";
+import { analyzeDocument, type ForensicArtifacts } from "./forensics";
 import { crossCheck } from "./ocr/crosscheck";
 import { ocrConfigured, runInkMarkCheck, runOcr, type OcrResult } from "./ocr/paddle";
 import { ASSESSOR_VERSION, assessClaims, type ClaimPolicy } from "./claims/assess";
@@ -111,7 +111,9 @@ async function buildSampleCase(sc: SampleCase): Promise<Case> {
     const { fields, warnings } = fixtureExtraction(sd, cfg.minConfidence);
     const mime = sd.format === "pdf" ? "application/pdf" : sd.format === "jpg" ? "image/jpeg" : "image/png";
     const g = await groundExtraction(fields, buf, mime);
-    const forensics = await analyzeDocument(buf, mime, fields);
+    const artifacts: ForensicArtifacts = {};
+    const forensics = await analyzeDocument(buf, mime, fields, artifacts);
+    await storeArtifacts(forensics, artifacts, key);
     const extraction: Extraction = { mode: "demo-fixture", model: null, extractedAt: sc.createdAt, fields, warnings, grounding: g.grounding };
     c.documents.push({
       id,
@@ -294,6 +296,14 @@ async function addInkMarkCheck(forensics: DocumentForensics, buf: Buffer, mimeTy
   }
 }
 
+/** Saves forensic images next to the original file and records where. */
+async function storeArtifacts(forensics: DocumentForensics, artifacts: ForensicArtifacts, storageKey: string) {
+  if (!artifacts.heatmap) return;
+  const key = `${storageKey}.ghost.png`;
+  await getStore().putFile(key, artifacts.heatmap, "image/png");
+  forensics.heatmapKey = key;
+}
+
 function log(entry: Record<string, unknown>) {
   // One JSON line per pipeline step; Cloud Logging parses these. Never document text or values.
   console.log(JSON.stringify({ severity: "INFO", ...entry }));
@@ -304,16 +314,17 @@ function log(entry: Record<string, unknown>) {
  * the document's text. If the primary model fails, or some of its quotes cannot
  * be found, the optional fallback model gets one try and the better result is kept.
  */
-async function extractLive(buf: Buffer, mimeType: string, filename: string): Promise<{ extraction: Extraction; detail: string; forensics: DocumentForensics }> {
+async function extractLive(buf: Buffer, mimeType: string, filename: string): Promise<{ extraction: Extraction; detail: string; forensics: DocumentForensics; artifacts: ForensicArtifacts }> {
   const cfg = getConfig();
   const forensicsByModel = new Map<string, DocumentForensics>();
+  const artifactsByModel = new Map<string, ForensicArtifacts>();
   const ocrCache: { ocr?: OcrResult | null } = {};
   const notes = new Map<string, string>();
   const attempt = async (model: string) => {
     const r = await extractWithGemini(buf, mimeType, cfg, model);
     const g = await groundExtraction(r.fields, buf, mimeType);
     notes.set(model, (await secondRead(buf, mimeType, filename, r.fields, g.grounding, ocrCache)) ?? "");
-    const fx = await analyzeDocument(buf, mimeType, r.fields);
+    const fx = await analyzeDocument(buf, mimeType, r.fields, artifactsByModel.get(model) ?? artifactsByModel.set(model, {}).get(model)!);
     if (!forensicsByModel.size) await addInkMarkCheck(fx, buf, mimeType, filename);
     forensicsByModel.set(model, fx);
     log({ step: "extract", model, latencyMs: r.usage.latencyMs, attempts: r.usage.attempts, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens, grounding: g.grounding, quotesNotFound: g.notFound });
@@ -333,7 +344,7 @@ async function extractLive(buf: Buffer, mimeType: string, filename: string): Pro
     try {
       const second = await attempt(fallback);
       if (!primary || second.notFound < primary.notFound) {
-        return { extraction: second.extraction, forensics: forensicsByModel.get(fallback)!, detail: `Read by ${fallback} on Vertex AI (fallback after ${primary ? `${primary.notFound} quote(s) not found` : "a failed call"} with ${cfg.geminiModel}).` };
+        return { extraction: second.extraction, forensics: forensicsByModel.get(fallback)!, artifacts: artifactsByModel.get(fallback) ?? {}, detail: `Read by ${fallback} on Vertex AI (fallback after ${primary ? `${primary.notFound} quote(s) not found` : "a failed call"} with ${cfg.geminiModel}).` };
       }
     } catch (e) {
       log({ severity: "WARNING", step: "extract", model: fallback, outcome: "failed", error: e instanceof Error ? e.message : String(e) });
@@ -341,7 +352,7 @@ async function extractLive(buf: Buffer, mimeType: string, filename: string): Pro
   }
   if (!primary) throw primaryError instanceof Error ? primaryError : new Error(String(primaryError));
   const g = primary.extraction.grounding === "pdf_text" ? `; quotes checked against the PDF text${primary.notFound ? `, ${primary.notFound} not found and excluded` : ""}` : "; quotes not machine-checked (image)";
-  return { extraction: primary.extraction, forensics: forensicsByModel.get(cfg.geminiModel)!, detail: `Read by ${cfg.geminiModel} on Vertex AI (live call, ${(primary.extraction.usage!.latencyMs / 1000).toFixed(1)} s${g}).${notes.get(cfg.geminiModel) ?? ""}` };
+  return { extraction: primary.extraction, forensics: forensicsByModel.get(cfg.geminiModel)!, artifacts: artifactsByModel.get(cfg.geminiModel) ?? {}, detail: `Read by ${cfg.geminiModel} on Vertex AI (live call, ${(primary.extraction.usage!.latencyMs / 1000).toFixed(1)} s${g}).${notes.get(cfg.geminiModel) ?? ""}` };
 }
 
 export async function processDocument(caseId: string, docId: string, actor: string) {
@@ -370,6 +381,7 @@ export async function processDocument(caseId: string, docId: string, actor: stri
       const live = await extractLive(buf, doc0.mimeType, doc0.filename);
       extraction = live.extraction;
       forensics = live.forensics;
+      await storeArtifacts(forensics, live.artifacts, doc0.storageKey);
       status = "extracted";
       detail = live.detail;
     } else {
@@ -378,7 +390,9 @@ export async function processDocument(caseId: string, docId: string, actor: stri
         const { fields, warnings } = fixtureExtraction(sample, cfg.minConfidence);
         const g = await groundExtraction(fields, buf, doc0.mimeType);
         const ocrNote = await secondRead(buf, doc0.mimeType, doc0.filename, fields, g.grounding, {});
-        forensics = await analyzeDocument(buf, doc0.mimeType, fields);
+        const artifacts: ForensicArtifacts = {};
+        forensics = await analyzeDocument(buf, doc0.mimeType, fields, artifacts);
+        await storeArtifacts(forensics, artifacts, doc0.storageKey);
         await addInkMarkCheck(forensics, buf, doc0.mimeType, doc0.filename);
         extraction = { mode: "demo-fixture", model: null, extractedAt: now(), fields, warnings, grounding: g.grounding };
         sampleId = sample.id;

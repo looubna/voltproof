@@ -164,6 +164,8 @@ export interface DocumentForensics {
   methods: ForensicMethod[];
   indicators: ForensicIndicator[];
   signatures: PdfSignatureCheck[];
+  /** Storage key of the compression-history heat map (photos with a JPEG-ghost indicator). */
+  heatmapKey?: string;
 }
 
 export type VerificationMethod = "issuer_phone" | "issuer_email" | "issuer_portal" | "registry_lookup" | "government_document_number";
@@ -365,10 +367,36 @@ export interface RegistryCheck {
 export interface AgentStep {
   /** Workflow node or agent that produced the step. */
   node: string;
-  kind: "check" | "tool_call" | "decision" | "draft";
+  kind: "check" | "tool_call" | "decision" | "draft" | "model_call" | "analysis";
   /** Tool name, for tool calls. */
   tool?: string;
+  /** Gemini model, for model calls and analyses. */
+  model?: string;
+  /** Duration in milliseconds. */
+  ms?: number;
   summary: string;
+  /** Result of a tool call or longer output. */
+  detail?: string;
+}
+
+export interface ForensicFindingExplanation {
+  indicatorCode: string;
+  field: string | null;
+  whatWasFound: string;
+  whatYouCanSee: string;
+  howSuchEditsAreMade: string;
+  innocentExplanations: string;
+  whatToRequest: string;
+}
+
+/** Gemini's explanation of one flagged document (it never changes a status). */
+export interface ForensicDocumentReport {
+  documentId: string;
+  filename: string;
+  model: string;
+  summary: string;
+  findings: ForensicFindingExplanation[];
+  limitations: string;
 }
 
 export interface CitedText {
@@ -394,6 +422,8 @@ export interface AgentRun {
   reviewerSummary: CitedText[];
   sellerQuestions: CitedText[];
   issuerRequests: IssuerRequestDraft[];
+  /** Forensic analyst explanations of flagged documents. */
+  forensicReport?: ForensicDocumentReport[];
   /** Drafts removed by validation (uncited, unknown finding, verdict language). */
   dropped: string[];
   by: string;

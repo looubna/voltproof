@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { VerificationForm } from "@/components/client";
+import { ForensicReportCard } from "@/components/forensic-report";
 import { CaseHeader, loadCase } from "@/components/case-header";
 import { fmtDateTime } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
@@ -46,6 +47,28 @@ export default async function DocumentPage({ params, searchParams }: { params: P
         </a>
       </div>
 
+      {(() => {
+        const potential = (d.forensics?.indicators ?? []).filter((i) => i.severity === "potential");
+        if (!potential.length) return null;
+        const report = [...(c.agentRuns ?? [])].reverse().flatMap((r) => r.forensicReport ?? []).find((r) => r.documentId === d.id);
+        return (
+          <section className="mb-6 grid gap-3">
+            <div className="rounded-xl border border-conflict-dot/40 bg-conflict-bg/30 px-5 py-4 text-sm">
+              <div className="font-semibold text-conflict-fg">Signs this document was edited ({potential.length})</div>
+              <ul className="mt-2 grid gap-1">
+                {potential.map((i, k) => (
+                  <li key={k}>• {i.message}</li>
+                ))}
+              </ul>
+              {!report && <p className="mt-2 text-xs text-muted">Run the evidence agent on the case for a detailed explanation by Gemini 2.5 Pro.</p>}
+            </div>
+            {report ? <ForensicReportCard c={c} report={report} showDocLink={false} /> : d.forensics?.heatmapKey ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={`${src}?view=heatmap`} alt="Compression-history map" className="max-h-80 rounded-lg border border-line" />
+            ) : null}
+          </section>
+        );
+      })()}
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
         <div className="card overflow-hidden">
           {quote && (

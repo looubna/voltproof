@@ -143,6 +143,29 @@ export function analyzePdfLayer(layer: PdfLayer, fields: ExtractionFields): Fore
     }
   }
 
+  // Text over text anywhere on a page, even where no value was extracted (an edited value is
+  // often exactly what a reader cannot extract, because the file holds two different values).
+  layer.pages.forEach((items, p) => {
+    for (let a = 0; a < items.length; a++) {
+      for (let b = a + 1; b < items.length; b++) {
+        const under = items[a];
+        const over = items[b]; // drawn later, so it is the one a reader sees
+        if (normText(under.str) === normText(over.str) || normText(under.str).includes(normText(over.str)) && overlapRatio(under, over) < 0.5) continue;
+        if (overlapRatio(under, over) < 0.5) continue;
+        const key = [under.str, over.str].sort().join("|");
+        if (flaggedPairs.has(key)) continue;
+        flaggedPairs.add(key);
+        out.push({
+          code: "text_overlaps_text",
+          severity: "potential",
+          method: "pdf_text_layer",
+          page: p + 1,
+          message: `Page ${p + 1}: the visible text “${over.str.trim()}” sits on top of other text in the same place (“${under.str.trim()}”). This is how a value is covered and retyped.`,
+        });
+      }
+    }
+  });
+
   // Annotations anywhere on the page, even if not over a field we read.
   const overField = new Set(out.filter((i) => i.method === "pdf_annotation").map((i) => i.page));
   for (const a of layer.annotations.filter((x) => SUSPICIOUS_ANNOTATIONS.has(x.subtype) && !overField.has(x.page))) {

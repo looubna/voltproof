@@ -71,6 +71,8 @@ export interface GhostResult {
   indicators: ForensicIndicator[];
   /** Ratio of error at the primary quality to error at the reference quality, per field (1 ≈ no dip). */
   fieldRatios: Partial<Record<FieldName, number>>;
+  /** PNG: the photo with areas that lack its compression history tinted red. */
+  heatmap?: Buffer;
 }
 
 export async function analyzeJpegGhost(file: Buffer, fields: ExtractionFields): Promise<GhostResult> {
@@ -126,5 +128,38 @@ export async function analyzeJpegGhost(file: Buffer, fields: ExtractionFields): 
       });
     }
   }
-  return { primaryQuality: best.q, indicators, fieldRatios };
+  // Heat map for the reviewer: within each flagged value's area, red where a textured
+  // block does not dip at the first-save quality; the area itself is outlined.
+  const flagged = indicators.map((i) => fields[i.field!]?.box).filter((b): b is [number, number, number, number] => !!b);
+  const inFlagged = new Set(flagged.flatMap((b) => blocksIn(at, b)));
+  const tint = Buffer.alloc(at.bw * at.bh * 4);
+  for (const i of inFlagged) {
+    if (ref.blocks[i] <= 0.15) continue;
+    const d = at.blocks[i] / ((lo.blocks[i] + hi.blocks[i]) / 2 + 0.05);
+    const a = Math.max(0, Math.min(1, (d - 0.75) / 0.35));
+    tint[i * 4] = 235;
+    tint[i * 4 + 1] = 45;
+    tint[i * 4 + 2] = 45;
+    tint[i * 4 + 3] = Math.round(a * 190);
+  }
+  const W = at.bw * BLOCK;
+  const H = at.bh * BLOCK;
+  const outlines = flagged
+    .map(([y0, x0, y1, x1]) => `<rect x="${(x0 / 1000) * W - 6}" y="${(y0 / 1000) * H - 6}" width="${((x1 - x0) / 1000) * W + 12}" height="${((y1 - y0) / 1000) * H + 12}" fill="none" stroke="#ff3b30" stroke-width="5" rx="6"/>`)
+    .join("");
+  const overlay = await sharp(tint, { raw: { width: at.bw, height: at.bh, channels: 4 } })
+    .resize(W, H, { kernel: "nearest" })
+    .composite([{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${outlines}</svg>`) }])
+    .png()
+    .toBuffer();
+  // Two steps: sharp resizes before compositing, so compose at full size first.
+  const base = await sharp(file)
+    .removeAlpha()
+    .extract({ left: 0, top: 0, width: at.bw * BLOCK, height: at.bh * BLOCK })
+    .modulate({ saturation: 0.35, brightness: 0.9 })
+    .composite([{ input: overlay }])
+    .png()
+    .toBuffer();
+  const heatmap = await sharp(base).resize({ width: Math.min(960, at.bw * BLOCK) }).png().toBuffer();
+  return { primaryQuality: best.q, indicators, fieldRatios, heatmap };
 }

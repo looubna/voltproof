@@ -6,7 +6,7 @@ VoltProof helps a dealer, lender or buyer check what a seller claims about a use
 
 **Live demo:** https://voltproof-app-815094766024.asia-northeast3.run.app (Google Cloud Run · Gemini 2.5 Flash on Vertex AI · ADK agent). Sign in with any name; the access code is shared with the judges privately. Synthetic demo cases only.
 
-**Demo video (2:57):** [`docs/voltproof-demo.mp4`](docs/voltproof-demo.mp4), recorded against the live deployment. Waits for live Gemini, OCR and agent calls are sped up and labelled.
+**Demo video (2:42):** [`docs/voltproof-demo.mp4`](docs/voltproof-demo.mp4), recorded against the live deployment. Waits for live Gemini, OCR and agent calls are sped up and labelled.
 
 ## Run locally
 
@@ -52,7 +52,7 @@ Three Cloud Run services. **Gemini reads, rules decide, the ADK agent investigat
  Shared: Vertex AI Gemini · Firestore · Cloud Storage · Secret Manager · Cloud Logging
 ```
 
-The agent (`agent-service/`) uses ADK 2's graph `Workflow` (fan-out with a `JoinNode`, routes, a bounded loop), two LLM agents with Pydantic output schemas, function tools that take the case id from session state (never from the model), and `before_tool`/`after_tool` callbacks for an allowlist, a tool budget and one re-check per document. Every draft must cite finding ids and is validated in the agent and again in the app. Model calls are bounded (low thinking, 75 s timeout, retries on 429/5xx, and an `on_model_error_callback` fallback so a slow call cannot hang a run). The agent runs on `gemini-2.5-flash`: with `gemini-3.5-flash`, the call that follows a tool result repeatedly hit Vertex AI's deadline in our tests, while document extraction in the app runs well on `gemini-3.5-flash`. Offline tests use a scripted model: `cd agent-service && .venv/bin/python -m pytest`. `AGENT_MODEL=offline-demo` runs a labelled non-Gemini planner for local demos.
+The agent (`agent-service/`) uses ADK 2's graph `Workflow` (fan-out with a `JoinNode`, routes, a bounded loop), two LLM agents with Pydantic output schemas, function tools that take the case id from session state (never from the model), and `before_tool`/`after_tool` callbacks for an allowlist, a tool budget and one re-check per document. Every draft must cite finding ids and is validated in the agent and again in the app. A **forensic analyst** step sends every flagged document (the actual image or PDF) with the checks' findings to **Gemini 2.5 Pro**, which explains each sign of editing: what was found, what is visible, how such edits are made, innocent explanations and what to ask for. Explanations must refer to indicators the checks raised and may not use verdict words (enforced in the agent and in the app); they never change a status. The case page links to a full step-by-step record of the run (every Gemini call with model and duration, every tool call and result), and flagged photos get a compression-history heat map as visual evidence. Model calls are bounded (low thinking, 75 s timeout, retries on 429/5xx, and an `on_model_error_callback` fallback so a slow call cannot hang a run). The agent runs on `gemini-2.5-flash`: with `gemini-3.5-flash`, the call that follows a tool result repeatedly hit Vertex AI's deadline in our tests, while document extraction in the app runs well on `gemini-3.5-flash`. Offline tests use a scripted model: `cd agent-service && .venv/bin/python -m pytest`. `AGENT_MODEL=offline-demo` runs a labelled non-Gemini planner for local demos.
 
 | Layer | Implementation |
 |---|---|
