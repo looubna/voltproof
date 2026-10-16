@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { DateTime, formatUtc } from "./date-time";
 import type { ReactNode } from "react";
 import { RESOLUTION_LABEL, STATUS_LABEL, STATUS_MEANING } from "@/lib/labels";
 import type { ReviewState } from "@/lib/derive";
 import type { EvidenceRef, Finding, Status } from "@/lib/types";
+
+export { DateTime };
 
 const STATUS_CLASS: Record<Status, string> = {
   verified: "bg-verified-bg text-verified-fg",
@@ -138,7 +141,9 @@ export function ReviewStamp({ state }: { state: ReviewState }) {
       <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
         <span className="font-semibold text-ink">Human review: {RESOLUTION_LABEL[r.resolution]}</span>
         <span>by {r.reviewer}</span>
-        <span>· {new Date(r.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</span>
+        <span>
+          · <DateTime iso={r.at} />
+        </span>
       </div>
       <p className="mt-1 text-ink">{r.note}</p>
       {state.stale ? <p className="mt-1 text-xs font-medium text-amber-800">The evidence changed after this review, so the item is open again.</p> : null}
@@ -189,10 +194,11 @@ export function FindingCard({ caseId, finding, review, children }: { caseId: str
   );
 }
 
+/** For text-only contexts (titles, exports). Server-rendered, so it states UTC; pages use <DateTime> to show local time. */
 export function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return formatUtc(iso, true);
 }
 
 export function fmtDateTime(iso: string) {
-  return new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+  return formatUtc(iso);
 }

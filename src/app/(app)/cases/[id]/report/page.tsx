@@ -1,6 +1,6 @@
 import { PrintButton } from "@/components/client";
 import { CaseHeader, loadCase } from "@/components/case-header";
-import { EvidenceTable, StatusBadge, fmtDateTime } from "@/components/ui";
+import { EvidenceTable, StatusBadge, DateTime } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import { STATUS_LABEL, STATUS_MEANING } from "@/lib/labels";
 import { buildReport } from "@/lib/report";
@@ -41,7 +41,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               {r.vehicle.year} {r.vehicle.make} {r.vehicle.model}
             </h1>
             <p className="text-sm text-muted">
-              Case {r.case.caseNumber} · generated {fmtDateTime(r.generatedAt)} by {r.generatedBy}
+              Case {r.case.caseNumber} · generated <DateTime iso={r.generatedAt} /> by {r.generatedBy}
             </p>
           </div>
           {r.synthetic && <span className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900">SYNTHETIC DATA — FICTIONAL DEMONSTRATION CASE</span>}
@@ -99,12 +99,20 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           <dd className="font-mono">{r.vehicle.vin || "—"}</dd>
           <dt className="text-muted">Case opened</dt>
           <dd>
-            {fmtDateTime(r.case.createdAt)} by {r.case.createdBy}
+            <DateTime iso={r.case.createdAt} /> by {r.case.createdBy}
           </dd>
           <dt className="text-muted">Extraction</dt>
           <dd>{modeText}</dd>
           <dt className="text-muted">Rules</dt>
-          <dd>{r.rules ? `Rules ${r.rules.version}, claim assessor ${r.rules.assessorVersion}, run ${fmtDateTime(r.rules.ranAt)}` : "—"}</dd>
+          <dd>
+            {r.rules ? (
+              <>
+                Rules {r.rules.version}, claim assessor {r.rules.assessorVersion}, run <DateTime iso={r.rules.ranAt} />
+              </>
+            ) : (
+              "—"
+            )}
+          </dd>
         </dl>
 
         <H n={2}>Summary of statuses</H>
@@ -163,7 +171,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               </div>
               {ch.humanReview && (
                 <p className="mt-2 rounded bg-canvas px-2 py-1 text-xs">
-                  <strong>Human review:</strong> {ch.humanReview.resolution} by {ch.humanReview.reviewer}, {fmtDateTime(ch.humanReview.at)} — “{ch.humanReview.note}”
+                  <strong>Human review:</strong> {ch.humanReview.resolution} by {ch.humanReview.reviewer}, <DateTime iso={ch.humanReview.at} /> — “{ch.humanReview.note}”
                   {ch.humanReview.stale ? " (evidence changed after this review)" : ""}
                 </p>
               )}
@@ -191,7 +199,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                   <td className="py-1.5 pr-2">{d.type}</td>
                   <td className="py-1.5 pr-2">{d.provenance}</td>
                   <td className="py-1.5 pr-2">
-                    {d.uploadedBy}, {fmtDateTime(d.uploadedAt)}
+                    {d.uploadedBy}, <DateTime iso={d.uploadedAt} />
                   </td>
                   <td className="py-1.5 pr-2">{d.extractionMode === "demo-fixture" ? "Demo fixture" : d.extractionModel ?? d.extractionStatus}</td>
                   <td className="py-1.5 pr-2 font-mono">{d.sha256.slice(0, 12)}…</td>
@@ -212,7 +220,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             {r.reviewerNotes.map((n, i) => (
               <li key={i} className="rounded-lg border border-line p-3">
                 <div className="text-xs text-muted">
-                  {fmtDateTime(n.at)} · {n.reviewer} · {n.finding} (machine status: {STATUS_LABEL[n.machineStatus]})
+                  <DateTime iso={n.at} /> · {n.reviewer} · {n.finding} (machine status: {STATUS_LABEL[n.machineStatus]})
                 </div>
                 <div className="mt-0.5">
                   <strong>{n.resolution}.</strong> {n.note}

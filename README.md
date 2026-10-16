@@ -15,10 +15,10 @@ npm install
 npm run dev            # http://localhost:3000
 ```
 
-Sign in with any name. No access code is needed until `VOLTPROOF_ACCESS_CODE` is set. Three synthetic cases are created on first load.
+Sign in with any name. No access code is needed until `VOLTPROOF_ACCESS_CODE` is set. Five synthetic cases are created on first load.
 
 ```bash
-npm test               # 92 tests: rules, claims, grounding, listing parsing, leads, Gemini retries, workflow, report
+npm test               # 140 tests: rules, claims, grounding, listing parsing, leads, Gemini retries, workflow, report
 npm run eval           # evaluation on synthetic data → eval/RESULTS.md
 npm run samples        # regenerate the synthetic PDFs/PNGs in /samples (already committed)
 ```
@@ -146,13 +146,13 @@ gcloud run deploy voltproof --source . --region $REGION --service-account $SA --
 
 | | Status |
 |---|---|
-| Case creation, upload validation, SHA-256, six rule checks, four statuses, Decision Impact, review queue + audit trail, report (print/PDF/JSON), integrity indicators | **Working, tested** (`npm test`) |
+| Case creation, upload validation, SHA-256, ten rule checks, four statuses, Decision Impact, review queue with filters and paging + audit trail, case archiving, report (print/PDF/JSON), integrity indicators | **Working, tested** (`npm test`) |
 | Gemini extraction on Vertex AI, Firestore, Cloud Storage, ADK agent, PaddleOCR service | **Live** on Cloud Run (project `voltproof-demo-2026`) |
 | Forensic checks, digital signatures with a trust list, NHTSA decode, NZ register lookup, manual issuer verification | **Live** |
 | Demo cases and their documents | **Synthetic.** Fixtures are hand-written, and their confidence values are illustrative |
 | Korea 자동차365 registry, per-vehicle NZ lookup (Motochek), reference stamp/signature library, PII masking, lender collateral review | **Future** |
 
-VoltProof has no lender or insurer partners, accesses no government databases, and does not price vehicles, approve loans or predict defaults.
+VoltProof has no lender or insurer partners, uses only public registry open data (no restricted government databases), and does not price vehicles, approve loans or predict defaults.
 
 ## Evaluation
 

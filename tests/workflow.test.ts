@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { addDocument, addReview, createCase, getCase, listCases, processDocument, resetSampleCase } from "@/lib/cases";
+import { addClaims, addDocument, addReview, createCase, getCase, listCases, processDocument, resetSampleCase, setCaseArchived, setDocumentProvenance, UserError } from "@/lib/cases";
 import { currentFindings, decisionImpactItems, reviewState, caseSummary } from "@/lib/derive";
 import { buildReport } from "@/lib/report";
 import { SAMPLE_CASES } from "@/lib/samples/definitions";
@@ -60,7 +60,7 @@ describe("synthetic demonstration cases", () => {
 
 describe("case workflow", () => {
   it("creates a case, ingests a sample document in demo mode and runs rules", async () => {
-    const c = await createCase({ make: "Tesla", model: "Model 3", year: 2021, vin: "5YJ3E1EA0MF934821" }, "Alex");
+    const c = await createCase({ make: "Tesla", model: "Model 3", year: 2021, vin: "5YJ3E1EA0MF934821", allowDuplicateVin: true }, "Alex");
     const buf = await readFile(path.join(process.cwd(), "samples", "model3-service-invoice-2026-03.pdf"));
     const doc = await addDocument(c.id, { name: "invoice.pdf", data: buf }, "seller_provided", "Alex");
     expect(doc.integrity.sha256).toHaveLength(64);
@@ -93,6 +93,53 @@ describe("case workflow", () => {
     await expect(createCase({ make: "", model: "EV6", year: 2022, vin: "" }, "A")).rejects.toThrow(/required/);
     await expect(createCase({ make: "Kia", model: "EV6", year: 1900, vin: "" }, "A")).rejects.toThrow(/model year/);
   });
+
+  it("rejects VINs that cannot be real", async () => {
+    await expect(createCase({ make: "Kia", model: "EV6", year: 2022, vin: "IOQ123" }, "A")).rejects.toThrow(/I, O or Q/);
+    await expect(createCase({ make: "Kia", model: "EV6", year: 2022, vin: "KNDC3DLC5N509821" }, "A")).rejects.toThrow(/exactly 17 characters; this one has 16/);
+    await expect(createCase({ make: "Kia", model: "EV6", year: 2022, vin: "KNDC3DLC5N50982#3" }, "A")).rejects.toThrow(/letters and digits/);
+  });
+
+  it("warns about an existing case for the same VIN until the duplicate is confirmed", async () => {
+    const vin = "KNDC4DLC0N5123456";
+    const first = await createCase({ make: "Kia", model: "EV6", year: 2022, vin }, "A");
+    const err = await createCase({ make: "Kia", model: "EV6", year: 2022, vin: vin.toLowerCase() }, "A").catch((e) => e);
+    expect(err).toBeInstanceOf(UserError);
+    expect(err.status).toBe(409);
+    expect(err.details.duplicates.map((d: { id: string }) => d.id)).toContain(first.id);
+    const second = await createCase({ make: "Kia", model: "EV6", year: 2022, vin, allowDuplicateVin: true }, "A");
+    expect(second.id).not.toBe(first.id);
+  });
+});
+
+describe("document source and archiving", () => {
+  it("records a change of document source and re-runs the rules with it", async () => {
+    const c = await createCase({ make: "Kia", model: "EV6", year: 2022, vin: "" }, "A");
+    const buf = await readFile(path.join(process.cwd(), "samples", "kia-ev6-dashboard-photo.png"));
+    const doc = await addDocument(c.id, { name: "dash.png", data: buf }, "seller_provided", "A");
+    const read = await processDocument(c.id, doc.id, "A");
+    expect(currentFindings(read).find((f) => f.id === "current-odometer")?.status).toBe("unknown");
+    const after = await setDocumentProvenance(c.id, doc.id, "dealer_captured", "Sam");
+    expect(after.documents[0].provenance).toBe("dealer_captured");
+    expect(currentFindings(after).find((f) => f.id === "current-odometer")?.status).toBe("verified");
+    expect(after.events.at(-2)?.detail).toMatch(/source changed from “Provided by seller” to “Captured by dealership staff”/);
+    await expect(setDocumentProvenance(c.id, doc.id, "trust_me", "Sam")).rejects.toThrow(/Choose where/);
+  });
+
+  it("archives a case out of the lists without losing it, and restores it", async () => {
+    const c = await createCase({ make: "Kia", model: "EV6", year: 2022, vin: "" }, "A");
+    await setCaseArchived(c.id, true, "Sam");
+    expect((await listCases()).some((x) => x.id === c.id)).toBe(false);
+    expect((await listCases({ includeArchived: true })).find((x) => x.id === c.id)?.archivedBy).toBe("Sam");
+    await setCaseArchived(c.id, false, "Sam");
+    expect((await listCases()).some((x) => x.id === c.id)).toBe(true);
+    await expect(setCaseArchived("demo-kia-ev6", true, "Sam")).rejects.toThrow(/cannot be archived/);
+  });
+
+  it("names the claim type once in validation errors", async () => {
+    const c = await createCase({ make: "Kia", model: "EV6", year: 2022, vin: "" }, "A");
+    await expect(addClaims(c.id, [{ type: "battery_soh", stated: { number: 140 } }], "A")).rejects.toThrow(/^Battery health must be a percentage between 1 and 100\.$/);
+  });
 });
 
 describe("human review", () => {
@@ -122,7 +169,7 @@ describe("human review", () => {
   });
 
   it("re-opens a resolved finding when the machine result later changes", async () => {
-    const c = await createCase({ make: "Tesla", model: "Model 3", year: 2021, vin: "5YJ3E1EA0MF934821" }, "A");
+    const c = await createCase({ make: "Tesla", model: "Model 3", year: 2021, vin: "5YJ3E1EA0MF934821", allowDuplicateVin: true }, "A");
     const read = async (file: string) => readFile(path.join(process.cwd(), "samples", file));
     const d1 = await addDocument(c.id, { name: "a.pdf", data: await read("model3-service-invoice-2026-03.pdf") }, "seller_provided", "A");
     await processDocument(c.id, d1.id, "A");

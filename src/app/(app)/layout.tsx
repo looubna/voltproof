@@ -9,8 +9,11 @@ function AiModePill() {
   const cfg = getConfig();
   if (cfg.aiMode === "vertex") {
     return (
-      <span className="rounded-full bg-emerald-400/15 px-2.5 py-1 text-[11px] font-medium text-emerald-200" title={`Project ${cfg.gcpProject}, ${cfg.gcpLocation}`}>
-        Live extraction · {cfg.geminiModel} on Vertex AI
+      <span
+        className="rounded-full bg-emerald-400/15 px-2.5 py-1 text-[11px] font-medium text-emerald-200"
+        title={`New uploads are read by ${cfg.geminiModel}${cfg.geminiFallbackModel ? `, with ${cfg.geminiFallbackModel} as fallback` : ""} (Vertex AI, project ${cfg.gcpProject}, ${cfg.gcpLocation}). Each document shows the model that actually read it, which can differ for earlier readings.`}
+      >
+        Live extraction · new uploads read by {cfg.geminiModel}
       </span>
     );
   }

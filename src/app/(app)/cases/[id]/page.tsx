@@ -6,7 +6,7 @@ import { AgentCard } from "@/components/agent";
 import { agentConfigured } from "@/lib/agent";
 import { SAMPLE_CASES } from "@/lib/samples/definitions";
 import { CaseHeader, loadCase } from "@/components/case-header";
-import { StatusBadge, fmtDateTime } from "@/components/ui";
+import { StatusBadge, DateTime } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config";
 import { currentFindings, decisionImpactItems } from "@/lib/derive";
@@ -187,7 +187,7 @@ export default async function CaseOverview({ params }: { params: Promise<{ id: s
               </dd>
               <dt className="text-muted">Opened</dt>
               <dd>
-                {fmtDateTime(c.createdAt)} by {c.createdBy}
+                <DateTime iso={c.createdAt} /> by {c.createdBy}
               </dd>
             </dl>
           </section>
@@ -229,7 +229,7 @@ export default async function CaseOverview({ params }: { params: Promise<{ id: s
               {[...c.events].reverse().map((e, i) => (
                 <li key={i} className="px-5 py-2.5 text-xs">
                   <div className="text-muted">
-                    {fmtDateTime(e.at)} · {e.actor}
+                    <DateTime iso={e.at} /> · {e.actor}
                   </div>
                   <div className="mt-0.5 text-ink">{e.detail}</div>
                 </li>

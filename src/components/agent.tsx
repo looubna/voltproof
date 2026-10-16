@@ -1,19 +1,28 @@
 import Link from "next/link";
 import { CopyButton, RunAgentButton } from "@/components/client";
-import { fmtDateTime } from "@/components/ui";
+import { DateTime } from "@/components/ui";
+import { currentFindings } from "@/lib/derive";
 import type { Case, CitedText } from "@/lib/types";
 
 const KIND_DOT: Record<string, string> = { check: "bg-consistent-dot", tool_call: "bg-brand-600", decision: "bg-conflict-dot", draft: "bg-verified-dot" };
 
+/** The findings a draft is based on, by their titles (ids are internal), each linking to its evidence. */
 function Cites({ c, ids }: { c: Case; ids: string[] }) {
+  const titles = new Map(currentFindings(c).map((f) => [f.id, f.title]));
+  const unique = Array.from(new Set(ids));
+  if (!unique.length) return null;
   return (
     <span className="ml-1 text-[11px] text-muted">
-      {ids.map((id, i) => (
-        <Link key={id} href={`/cases/${c.id}/evidence#${id}`} className="link">
+      (see{" "}
+      {unique.map((id, i) => (
+        <span key={id}>
           {i ? ", " : ""}
-          {id.startsWith("claim:") ? "claim" : id}
-        </Link>
+          <Link href={`/cases/${c.id}/evidence#${id}`} className="link">
+            {titles.get(id) ?? "an earlier finding"}
+          </Link>
+        </span>
       ))}
+      )
     </span>
   );
 }
@@ -55,7 +64,7 @@ export function AgentCard({ c, configured }: { c: Case; configured: boolean }) {
             See exactly what the agent did{run.forensicReport?.length ? ` and the falsification analysis (${run.forensicReport.length} document${run.forensicReport.length === 1 ? "" : "s"})` : ""} →
           </Link>
           <p className="text-xs text-muted">
-            Last run {fmtDateTime(run.finishedAt)} · {run.model}
+            Last run <DateTime iso={run.finishedAt} /> · {run.model}
             {run.model === "offline-demo-planner" ? " (offline stand-in, not Gemini)" : ""} · agent {run.agentVersion} · {run.steps.length} steps
             {run.dropped.length ? ` · ${run.dropped.length} draft(s) removed by validation` : ""}
           </p>

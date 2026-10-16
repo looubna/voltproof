@@ -321,6 +321,9 @@ export interface Case {
   ruleRuns: RuleRun[];
   reviews: Review[];
   events: AuditEvent[];
+  /** Set when a person archived the case. Archived cases keep their audit trail but leave the dashboard and review queue. */
+  archivedAt?: string | null;
+  archivedBy?: string | null;
 }
 
 // ---------------------------------------------------------------- landing page leads

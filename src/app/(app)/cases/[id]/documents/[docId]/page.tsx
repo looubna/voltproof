@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { VerificationForm } from "@/components/client";
+import { DocumentSourceSelect, VerificationForm } from "@/components/client";
 import { ForensicReportCard } from "@/components/forensic-report";
 import { CaseHeader, loadCase } from "@/components/case-header";
-import { fmtDateTime } from "@/components/ui";
+import { DateTime } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
+import { getConfig } from "@/lib/config";
 import { DOC_TYPE_LABEL, EXTRACTION_STATUS_LABEL, FIELD_LABEL, PROVENANCE_LABEL } from "@/lib/labels";
 import { formatOdometer } from "@/lib/normalize";
 import type { FieldName, ForensicMethod, Odometer } from "@/lib/types";
@@ -32,6 +33,7 @@ export default async function DocumentPage({ params, searchParams }: { params: P
   const src = `/api/cases/${c.id}/documents/${d.id}/file`;
   const isPdf = d.mimeType === "application/pdf";
   const ex = d.extraction;
+  const cfg = getConfig();
 
   return (
     <>
@@ -40,7 +42,7 @@ export default async function DocumentPage({ params, searchParams }: { params: P
         <div>
           <h2 className="break-all text-lg font-semibold">{d.filename}</h2>
           <p className="text-sm text-muted">
-            {ex?.fields.documentType.value ? DOC_TYPE_LABEL[ex.fields.documentType.value] : "Type not determined"} · {PROVENANCE_LABEL[d.provenance]} · uploaded {fmtDateTime(d.uploadedAt)} by {d.uploadedBy}
+            {ex?.fields.documentType.value ? DOC_TYPE_LABEL[ex.fields.documentType.value] : "Type not determined"} · {PROVENANCE_LABEL[d.provenance]} · uploaded <DateTime iso={d.uploadedAt} /> by {d.uploadedBy}
           </p>
         </div>
         <a href={src} target="_blank" rel="noreferrer" className="btn btn-secondary">
@@ -92,7 +94,17 @@ export default async function DocumentPage({ params, searchParams }: { params: P
               <p className="text-sm text-muted">{EXTRACTION_STATUS_LABEL[d.extractionStatus]}. {d.extractionError}</p>
             ) : (
               <>
-                <p className="mb-2 text-xs text-muted">{ex.mode === "demo-fixture" ? "Demo fixture (hand-written, not a live AI call)" : `Read by ${ex.model} on ${fmtDateTime(ex.extractedAt)}`}</p>
+                <p className="mb-2 text-xs text-muted">
+                  {ex.mode === "demo-fixture" ? (
+                    "Demo fixture (hand-written, not a live AI call)"
+                  ) : (
+                    <>
+                      Read by <span className="font-mono">{ex.model}</span> on <DateTime iso={ex.extractedAt} />
+                      {/* The header names the model for new uploads; say so when this older reading used another one. */}
+                      {cfg.aiMode === "vertex" && ex.model !== cfg.geminiModel ? `. New uploads are now read by ${cfg.geminiModel}; this reading is kept as it was made.` : null}
+                    </>
+                  )}
+                </p>
                 <ul className="grid gap-2 text-sm">
                   {(Object.keys(ex.fields) as FieldName[])
                     .filter((n) => ex.fields[n].value !== null)
@@ -121,7 +133,12 @@ export default async function DocumentPage({ params, searchParams }: { params: P
           <section className="card p-4 text-xs">
             <div className="label mb-2">File record</div>
             <dl className="grid gap-1">
-              <dt className="text-muted">SHA-256 at upload</dt>
+              <dt className="text-muted">Where it came from</dt>
+              <dd>
+                {c.synthetic ? PROVENANCE_LABEL[d.provenance] : <DocumentSourceSelect caseId={c.id} docId={d.id} value={d.provenance} />}
+                <p className="mt-0.5 text-muted">Only readings captured by dealership staff can be Verified. A change is recorded in the case history.</p>
+              </dd>
+              <dt className="mt-1 text-muted">SHA-256 at upload</dt>
               <dd className="break-all font-mono">{d.integrity.sha256}</dd>
               <dt className="mt-1 text-muted">Detected type</dt>
               <dd>{d.integrity.detectedType.toUpperCase()} · {(d.sizeBytes / 1024).toFixed(0)} KB</dd>
@@ -161,7 +178,7 @@ export default async function DocumentPage({ params, searchParams }: { params: P
                   ? [...d.verifications].reverse().map((v) => (
                       <p key={v.id} className={v.outcome === "denied" ? "text-conflict-fg" : v.outcome === "confirmed" ? "text-verified-fg" : ""}>
                         {v.outcome === "confirmed" ? "Confirmed" : v.outcome === "denied" ? "Denied" : "No response"} — {v.contact}
-                        {v.reference ? `, ref. ${v.reference}` : ""} ({v.method.replace(/_/g, " ")}), recorded by {v.by} {fmtDateTime(v.at)}
+                        {v.reference ? `, ref. ${v.reference}` : ""} ({v.method.replace(/_/g, " ")}), recorded by {v.by} <DateTime iso={v.at} />
                         {v.note ? `: “${v.note}”` : ""}
                       </p>
                     ))
@@ -170,7 +187,14 @@ export default async function DocumentPage({ params, searchParams }: { params: P
               {d.extractionHistory.length > 0 && (
                 <>
                   <dt className="mt-1 text-muted">Earlier extractions kept</dt>
-                  <dd>{d.extractionHistory.map((h) => `${h.mode === "demo-fixture" ? "demo fixture" : h.model} (${fmtDateTime(h.extractedAt)})`).join("; ")}</dd>
+                  <dd>
+                    {d.extractionHistory.map((h, i) => (
+                      <span key={i}>
+                        {i ? "; " : ""}
+                        {h.mode === "demo-fixture" ? "demo fixture" : h.model} (<DateTime iso={h.extractedAt} />)
+                      </span>
+                    ))}
+                  </dd>
                 </>
               )}
             </dl>

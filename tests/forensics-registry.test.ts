@@ -214,6 +214,23 @@ describe("registry and issuer workflow", () => {
     expect(currentFindings(c).find((f) => f.id === "vin-structure")?.status).toBe("verified");
   });
 
+  it("does not show the VIN check as Consistent when the decoder cannot identify the VIN", async () => {
+    const fakeFetch = (async () => new Response(JSON.stringify({ Results: [{ Make: "", ErrorCode: "7", ErrorText: "7 - Manufacturer is not registered with NHTSA." }] }))) as typeof fetch;
+    const c = await runVinDecode("demo-kia-ev6", "Jordan", fakeFetch);
+    const f = currentFindings(c).find((x) => x.id === "vin-structure")!;
+    expect(c.registryChecks?.at(-1)?.outcome).toBe("not_found");
+    expect(f.status).toBe("unknown");
+    expect(f.result).toMatch(/could not identify this VIN/);
+  });
+
+  it("does not show the VIN check as Consistent when the decoder is unreachable", async () => {
+    const fakeFetch = (async () => new Response("", { status: 503 })) as typeof fetch;
+    const c = await runVinDecode("demo-kia-ev6", "Jordan", fakeFetch);
+    const f = currentFindings(c).find((x) => x.id === "vin-structure")!;
+    expect(f.status).toBe("unknown");
+    expect(f.nextAction).toMatch(/again/);
+  });
+
   it("flags a decode that names another manufacturer", async () => {
     const fakeFetch = (async () => new Response(JSON.stringify({ Results: [{ Make: "HYUNDAI", ModelYear: "2022", ErrorCode: "0" }] }))) as typeof fetch;
     const c = await runVinDecode("demo-kia-ev6", "Jordan", fakeFetch);

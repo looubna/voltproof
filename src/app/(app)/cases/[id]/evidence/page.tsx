@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ReprocessButton } from "@/components/client";
 import { CaseHeader, loadCase } from "@/components/case-header";
-import { FindingCard, StatusBadge, StatusLegend, docHref } from "@/components/ui";
+import { DateTime, FindingCard, StatusBadge, StatusLegend, docHref } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config";
 import { currentFindings, latestRun, reviewState } from "@/lib/derive";
@@ -169,7 +169,7 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
       <section className="mb-10">
         <h2 className="mb-1 text-lg font-semibold">2 · Rule checks</h2>
         <p className="mb-4 text-sm text-muted">
-          Statuses are set by deterministic rules (version {run?.rulesVersion ?? "—"}, last run {run ? new Date(run.at).toLocaleString("en-GB") : "—"}), never by the AI model.
+          Statuses are set by deterministic rules (version {run?.rulesVersion ?? "—"}, last run {run ? <DateTime iso={run.at} /> : "—"}), never by the AI model.
         </p>
         <div className="mb-4">
           <StatusLegend />
@@ -274,7 +274,7 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
               ))}
             </ul>
             <p className="mt-3 text-xs text-muted">{AUTHENTICITY_STATEMENT}</p>
-            <p className="mt-1 text-xs text-muted">Issuer verification (for example, confirming a battery report with its test provider) is a planned integration and is not available yet.</p>
+            <p className="mt-1 text-xs text-muted">To confirm a document with its issuer (for example, a battery report with its test provider), open the document and record it under “Check with the issuer”.</p>
           </div>
         </div>
       </section>

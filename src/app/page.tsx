@@ -6,6 +6,9 @@ import { DemoRequestForm, WaitlistForm } from "@/components/client";
 import { StatusBadge } from "@/components/ui";
 import type { Status } from "@/lib/types";
 
+// Rendered per request so its inline scripts carry the Content-Security-Policy nonce (see src/middleware.ts).
+export const dynamic = "force-dynamic";
+
 const NAVY = "bg-[#0f1c2b]";
 const PAPER = "bg-[#f3f1ec]";
 

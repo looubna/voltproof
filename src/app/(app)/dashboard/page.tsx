@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { EmptyState, PageTitle, StatusBadge, SyntheticBadge, fmtDate } from "@/components/ui";
+import { EmptyState, PageTitle, StatusBadge, SyntheticBadge, DateTime } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import { listCases } from "@/lib/cases";
 import { STAGE_LABEL, caseSummary, currentFindings } from "@/lib/derive";
@@ -17,11 +17,12 @@ function Stat({ label, value, hint, tone }: { label: string; value: number; hint
   );
 }
 
-export default async function Dashboard() {
+export default async function Dashboard({ searchParams }: { searchParams: Promise<{ archived?: string }> }) {
   await requireUser();
-  let cases;
+  const showArchived = (await searchParams).archived === "1";
+  let all;
   try {
-    cases = await listCases();
+    all = await listCases({ includeArchived: true });
   } catch (e) {
     console.error(e);
     return (
@@ -30,11 +31,15 @@ export default async function Dashboard() {
       </EmptyState>
     );
   }
+  const archivedCount = all.filter((c) => c.archivedAt).length;
+  const cases = all.filter((c) => !!c.archivedAt === showArchived);
+  const active = showArchived ? all.filter((c) => !c.archivedAt) : cases;
   const rows = cases.map((c) => ({ c, s: caseSummary(c), findings: currentFindings(c) }));
+  const activeRows = showArchived ? active.map((c) => ({ c, s: caseSummary(c) })) : rows;
   const totals = {
-    awaiting: rows.filter((r) => r.s.stage === "awaiting_review").length,
-    conflicts: rows.reduce((a, r) => a + r.s.openConflicts, 0),
-    missing: rows.reduce((a, r) => a + r.s.missingEvidence, 0),
+    awaiting: activeRows.filter((r) => r.s.stage === "awaiting_review").length,
+    conflicts: activeRows.reduce((a, r) => a + r.s.openConflicts, 0),
+    missing: activeRows.reduce((a, r) => a + r.s.missingEvidence, 0),
   };
 
   return (
@@ -52,7 +57,7 @@ export default async function Dashboard() {
       </PageTitle>
 
       <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Total cases" value={cases.length} hint="Including synthetic demo cases" />
+        <Stat label="Total cases" value={active.length} hint={`Including synthetic demo cases${archivedCount ? `; ${archivedCount} archived not counted` : ""}`} />
         <Stat label="Awaiting review" value={totals.awaiting} hint="Cases with open items for a person" />
         <Stat label="Open conflicts" value={totals.conflicts} hint="Sources disagree or a check failed" tone="conflict" />
         <Stat label="Missing evidence" value={totals.missing} hint="Unknowns that could affect the decision" />
@@ -60,12 +65,23 @@ export default async function Dashboard() {
 
       <section className="card overflow-hidden">
         <div className="flex items-center justify-between border-b border-line px-5 py-3">
-          <h2 className="font-semibold">Cases</h2>
-          <span className="text-xs text-muted">Newest first</span>
+          <h2 className="font-semibold">{showArchived ? "Archived cases" : "Cases"}</h2>
+          <span className="flex items-center gap-3 text-xs text-muted">
+            Newest first
+            {showArchived ? (
+              <Link href="/dashboard" className="link">
+                Back to active cases
+              </Link>
+            ) : archivedCount ? (
+              <Link href="/dashboard?archived=1" className="link">
+                Show archived ({archivedCount})
+              </Link>
+            ) : null}
+          </span>
         </div>
         {rows.length === 0 ? (
           <div className="p-5">
-            <EmptyState title="No cases yet">Create a case to start reviewing documents.</EmptyState>
+            {showArchived ? <EmptyState title="No archived cases" /> : <EmptyState title="No cases yet">Create a case to start reviewing documents.</EmptyState>}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -111,7 +127,7 @@ export default async function Dashboard() {
                         <span className={s.stage === "awaiting_review" ? "font-medium text-conflict-fg" : "text-muted"}>{STAGE_LABEL[s.stage]}</span>
                         {s.openReviewItems ? <div className="text-xs text-muted">{s.openReviewItems} open item{s.openReviewItems === 1 ? "" : "s"}</div> : null}
                       </td>
-                      <td className="px-3 py-3 whitespace-nowrap text-muted">{fmtDate(c.createdAt)}</td>
+                      <td className="px-3 py-3 whitespace-nowrap text-muted"><DateTime iso={c.createdAt} dateOnly /></td>
                     </tr>
                   );
                 })}

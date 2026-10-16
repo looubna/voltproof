@@ -64,6 +64,17 @@ export const FIELD_LABEL: Record<string, string> = {
   registrationNumber: "Registration number",
 };
 
+/** A field label for use mid-sentence: "Odometer" → "odometer", while "VIN" and "DC …" keep their capitals. */
+export function fieldLabelInline(name: string): string {
+  const label = FIELD_LABEL[name] ?? name;
+  return label.replace(/^[A-Z](?=[a-z])/, (c) => c.toLowerCase());
+}
+
+/** "a", "a and b", "a, b and c". */
+export function joinList(items: string[]): string {
+  return items.length <= 2 ? items.join(" and ") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
 export const CLAIM_TYPE_LABEL: Record<ClaimType, string> = {
   battery_soh: "Battery health",
   odometer: "Mileage",

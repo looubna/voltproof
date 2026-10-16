@@ -12,6 +12,16 @@ export function isWellFormedVin(vin: string): boolean {
   return /^[A-HJ-NPR-Z0-9]{17}$/.test(normalizeVin(vin));
 }
 
+/** Why a VIN typed into the case record cannot be right, or null if its shape is valid (or it is empty). */
+export function vinFormatProblem(vin: string): string | null {
+  const v = normalizeVin(vin);
+  if (!v) return null;
+  if (!/^[A-Z0-9]+$/.test(v)) return "A VIN contains only letters and digits.";
+  if (/[IOQ]/.test(v)) return "A VIN never contains the letters I, O or Q (they are too easily confused with 1 and 0). Check the VIN plate.";
+  if (v.length !== 17) return `A VIN has exactly 17 characters; this one has ${v.length}.`;
+  return null;
+}
+
 export function vinTail(vin: string): string {
   return normalizeVin(vin).slice(-4);
 }

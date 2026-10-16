@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { CaseHeader, loadCase } from "@/components/case-header";
 import { ForensicReportCard } from "@/components/forensic-report";
-import { fmtDateTime } from "@/components/ui";
+import { DateTime } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -51,7 +51,7 @@ export default async function AgentRunPage({ params }: { params: Promise<{ id: s
             <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-5 py-3">
               <h3 className="font-semibold">Step by step</h3>
               <span className="text-xs text-muted">
-                {fmtDateTime(run.startedAt)} · {run.steps.length} steps · {Math.round((new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) / 1000)} s · agent {run.agentVersion}
+                <DateTime iso={run.startedAt} /> · {run.steps.length} steps · {Math.round((new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) / 1000)} s · agent {run.agentVersion}
               </span>
             </header>
             <ol className="divide-y divide-line">
