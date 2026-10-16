@@ -7,7 +7,7 @@ export default function NotFound() {
   return (
     <main className="mx-auto grid max-w-xl gap-6 px-4 py-16">
       <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight text-ink">
-        <LogoMark className="h-6 w-6" />
+        <LogoMark size={24} />
         VoltProof
       </Link>
       <EmptyState title="Page not found">

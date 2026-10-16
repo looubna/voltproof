@@ -18,10 +18,13 @@ npm run dev            # http://localhost:3000
 Sign in with any name. No access code is needed until `VOLTPROOF_ACCESS_CODE` is set. Five synthetic cases are created on first load.
 
 ```bash
-npm test               # 140 tests: rules, claims, grounding, listing parsing, leads, Gemini retries, workflow, report
+npm test               # 144 tests: rules, claims, grounding, listing parsing, leads, Gemini retries, workflow, report, brand assets
 npm run eval           # evaluation on synthetic data → eval/RESULTS.md
 npm run samples        # regenerate the synthetic PDFs/PNGs in /samples (already committed)
+npm run brand          # regenerate the favicon and app icons from src/assets/brand (already committed)
 ```
+
+The logo artwork in `src/assets/brand` comes from the landing page design. Pages use it through `src/components/logo.tsx`: `Logo` (mark and light wordmark, for dark backgrounds only) and `LogoMark` (the square mark, any background).
 
 ### Demo walkthrough
 

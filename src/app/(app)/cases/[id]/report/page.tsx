@@ -1,5 +1,6 @@
 import { PrintButton } from "@/components/client";
 import { CaseHeader, loadCase } from "@/components/case-header";
+import { LogoMark } from "@/components/logo";
 import { EvidenceTable, StatusBadge, DateTime } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import { STATUS_LABEL, STATUS_MEANING } from "@/lib/labels";
@@ -36,7 +37,11 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       <article className="card mx-auto max-w-4xl p-6 sm:p-10 print:max-w-none print:border-0 print:p-0">
         <header className="flex flex-wrap items-start justify-between gap-4 border-b-2 border-navy-900 pb-4">
           <div>
-            <div className="label">VoltProof · Evidence review report</div>
+            <div className="label flex items-center gap-2">
+              {/* Loaded eagerly so it is in place when the report is printed or saved as PDF. */}
+              <LogoMark size={20} priority />
+              VoltProof · Evidence review report
+            </div>
             <h1 className="mt-1 text-2xl font-semibold">
               {r.vehicle.year} {r.vehicle.make} {r.vehicle.model}
             </h1>

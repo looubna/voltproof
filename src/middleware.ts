@@ -62,5 +62,7 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   // Everything except static assets, so every page gets its CSP; isPublic() decides what needs a session.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg).*)"],
+  // Browser icons and the manifest are skipped too: signed-out pages show them, and browsers fetch the
+  // manifest without cookies, so behind the session check they would be redirected to the sign-in page.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|apple-icon.png|manifest.webmanifest|icons/).*)"],
 };

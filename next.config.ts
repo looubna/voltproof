@@ -19,6 +19,8 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["@google-cloud/firestore", "@google-cloud/storage", "@google/genai"],
   outputFileTracingIncludes: { "/**": ["./samples/**/*"] },
   experimental: { serverActions: { bodySizeLimit: "12mb" } },
+  // Image qualities next/image may request: the default, and 90 for the logo (src/components/logo.tsx).
+  images: { qualities: [75, 90] },
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   },

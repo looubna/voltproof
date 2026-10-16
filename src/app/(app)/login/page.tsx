@@ -10,7 +10,8 @@ export default function LoginPage() {
   return (
     <div className="mx-auto mt-10 max-w-md">
       <div className="mb-6 text-center">
-        <LogoMark className="mx-auto mb-3 h-12 w-12" />
+        {/* Light page, so the mark alone; the heading below carries the name. */}
+        <LogoMark size={48} priority className="mx-auto mb-3" />
         <h1 className="text-2xl font-semibold tracking-tight">VoltProof</h1>
         <p className="mt-1 text-sm text-muted">Evidence review for used electric vehicles</p>
       </div>

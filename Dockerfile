@@ -17,6 +17,8 @@ ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=8080 HOSTNAME=0.0.0.0 VOL
 RUN addgroup -S app && adduser -S app -G app
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
+# Standalone output leaves out public/ (the manifest icons), so copy it like .next/static.
+COPY --from=build /app/public ./public
 COPY --from=build /app/samples ./samples
 COPY --from=build /app/trust ./trust
 USER app
