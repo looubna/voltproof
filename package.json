@@ -1,0 +1,38 @@
+{
+  "name": "voltproof",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "samples": "tsx scripts/generate-samples.ts",
+    "eval": "tsx scripts/eval.ts"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^9.3.1",
+    "@google-cloud/storage": "^8.4.0",
+    "@google/genai": "^2.29.1",
+    "asn1js": "^3.0.5",
+    "next": "^15.5.27",
+    "pkijs": "^3.2.4",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "unpdf": "^0.12.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "pdf-lib": "^1.17.1",
+    "sharp": "^0.35.5",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

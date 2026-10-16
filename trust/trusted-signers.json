@@ -1,0 +1,10 @@
+{
+  "note": "Trust list of known issuer signing certificates (SHA-256 of the DER certificate). The entries below are SYNTHETIC demo certificates created by `npm run samples`; replace them with real issuers' certificates after confirming each with the issuer.",
+  "signers": [
+    {
+      "name": "Synthetic Cell Diagnostics Ltd",
+      "sha256": "781fff0b73fe6157f88efb792791a59ae6abce25a125ffda24fade4013aa9dd3",
+      "note": "Synthetic demo certificate"
+    }
+  ]
+}

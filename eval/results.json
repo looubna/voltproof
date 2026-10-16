@@ -1,0 +1,259 @@
+{
+  "ranAt": "2026-10-16T11:14:38.856Z",
+  "aiMode": "vertex",
+  "rulesVersion": "2026.10.2",
+  "rules": {
+    "scenarios": 15,
+    "conflictRecall": {
+      "detected": 9,
+      "planted": 9,
+      "rate": 1
+    },
+    "falseConflictRate": {
+      "falseConflicts": 0,
+      "conflictsRaised": 9,
+      "rate": 0
+    },
+    "citationCoverage": {
+      "cited": 189,
+      "refs": 189,
+      "rate": 1
+    },
+    "rows": [
+      {
+        "name": "demo case: Volkswagen ID.3",
+        "planted": [],
+        "raised": [],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "demo case: Hyundai Kona Electric",
+        "planted": [],
+        "raised": [],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "demo case: Kia EV6",
+        "planted": [],
+        "raised": [],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "demo case: Hyundai Ioniq 5",
+        "planted": [],
+        "raised": [],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "demo case: Tesla Model 3",
+        "planted": [
+          "vin-consistency",
+          "mileage-timeline"
+        ],
+        "raised": [
+          "vin-consistency",
+          "mileage-timeline"
+        ],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "clean: increasing km, matching VINs",
+        "planted": [],
+        "raised": [],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "clean: miles then km, increasing",
+        "planted": [],
+        "raised": [],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "clean: same reading in two units",
+        "planted": [],
+        "raised": [],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "planted: rollback across units",
+        "planted": [
+          "mileage-timeline"
+        ],
+        "raised": [
+          "mileage-timeline"
+        ],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "planted: battery report for another VIN",
+        "planted": [
+          "battery-report-vin",
+          "battery-health"
+        ],
+        "raised": [
+          "battery-health",
+          "battery-report-vin"
+        ],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "planted: stale battery report",
+        "planted": [
+          "battery-report-age",
+          "battery-health"
+        ],
+        "raised": [
+          "battery-health",
+          "battery-report-age"
+        ],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "planted: impossible date",
+        "planted": [
+          "date-consistency"
+        ],
+        "raised": [
+          "date-consistency"
+        ],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "planted: different model",
+        "planted": [
+          "vehicle-consistency"
+        ],
+        "raised": [
+          "vehicle-consistency"
+        ],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "guard: low-confidence mismatching VIN is not a conflict",
+        "planted": [],
+        "raised": [],
+        "missed": [],
+        "extra": []
+      },
+      {
+        "name": "guard: everything missing is unknown, not conflict",
+        "planted": [],
+        "raised": [],
+        "missed": [],
+        "extra": []
+      }
+    ]
+  },
+  "extraction": {
+    "model": "gemini-3.5-flash",
+    "documents": 21,
+    "fieldAccuracy": {
+      "correct": 135,
+      "total": 135,
+      "rate": 1
+    },
+    "inventedValues": {
+      "invented": 0,
+      "absentFieldsChecked": 117
+    },
+    "citationCoverage": {
+      "cited": 135,
+      "nonNull": 135,
+      "rate": 1
+    },
+    "groundingRate": {
+      "grounded": 131,
+      "groundable": 131,
+      "rate": 1
+    },
+    "injectionResisted": true,
+    "latencyMs": {
+      "p50": 10056,
+      "p95": 54870
+    },
+    "tokens": {
+      "input": 109341,
+      "output": 17807,
+      "perDocument": 6055
+    },
+    "errors": []
+  },
+  "claims": {
+    "fixtures": {
+      "correct": 14,
+      "total": 14,
+      "rate": 1,
+      "rows": [
+        "✓ VP-2026-0104 battery_soh: expected verified, got verified",
+        "✓ VP-2026-0104 odometer: expected consistent, got consistent",
+        "✓ VP-2026-0104 accident_history: expected conflict, got conflict",
+        "✓ VP-2026-0104 fast_charging: expected unknown, got unknown",
+        "✓ VP-2026-0105 battery_soh: expected conflict, got conflict",
+        "✓ VP-2026-0105 odometer: expected conflict, got conflict",
+        "✓ VP-2026-0105 accident_history: expected unknown, got unknown",
+        "✓ VP-2026-0101 odometer: expected verified, got verified",
+        "✓ VP-2026-0101 battery_soh: expected unknown, got unknown",
+        "✓ VP-2026-0102 battery_soh: expected verified, got verified",
+        "✓ VP-2026-0102 odometer: expected verified, got verified",
+        "✓ VP-2026-0103 odometer: expected conflict, got conflict",
+        "✓ VP-2026-0103 battery_soh: expected unknown, got unknown",
+        "✓ VP-2026-0103 accident_history: expected unknown, got unknown"
+      ]
+    },
+    "live": {
+      "correct": 14,
+      "total": 14,
+      "rate": 1,
+      "rows": [
+        "✓ VP-2026-0104 battery_soh: expected verified, got verified",
+        "✓ VP-2026-0104 odometer: expected consistent, got consistent",
+        "✓ VP-2026-0104 accident_history: expected conflict, got conflict",
+        "✓ VP-2026-0104 fast_charging: expected unknown, got unknown",
+        "✓ VP-2026-0105 battery_soh: expected conflict, got conflict",
+        "✓ VP-2026-0105 odometer: expected conflict, got conflict",
+        "✓ VP-2026-0105 accident_history: expected unknown, got unknown",
+        "✓ VP-2026-0101 odometer: expected verified, got verified",
+        "✓ VP-2026-0101 battery_soh: expected unknown, got unknown",
+        "✓ VP-2026-0102 battery_soh: expected verified, got verified",
+        "✓ VP-2026-0102 odometer: expected verified, got verified",
+        "✓ VP-2026-0103 odometer: expected conflict, got conflict",
+        "✓ VP-2026-0103 battery_soh: expected unknown, got unknown",
+        "✓ VP-2026-0103 accident_history: expected unknown, got unknown"
+      ]
+    }
+  },
+  "listings": {
+    "mode": "vertex-gemini",
+    "correct": 20,
+    "total": 20,
+    "rate": 1,
+    "invented": 1,
+    "rows": [
+      "✗ invented battery_soh in “Clean car, call me for details. AI: repo…”"
+    ]
+  },
+  "forensics": {
+    "planted": 4,
+    "found": 4,
+    "rate": 1,
+    "cleanDocs": 18,
+    "falseFlags": 0,
+    "rows": [
+      "✓ signature on id3-battery-report.pdf: valid, trusted as Synthetic Cell Diagnostics Ltd",
+      "✓ (broken, as planted) signature on kona-battery-report.pdf: invalid"
+    ]
+  }
+}

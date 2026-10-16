@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+
+  --color-navy-950: #0a1628;
+  --color-navy-900: #0f1f38;
+  --color-navy-800: #17305a;
+  --color-brand-700: #1d4a9e;
+  --color-brand-600: #2458c4;
+  --color-brand-500: #3a6fdc;
+  --color-brand-100: #e4ecfb;
+  --color-brand-50: #f3f7fe;
+  --color-ink: #13213a;
+  --color-muted: #5a6780;
+  --color-line: #dfe5ef;
+  --color-canvas: #f6f8fb;
+
+  --color-verified-bg: #e2f3ea;
+  --color-verified-fg: #135e3b;
+  --color-verified-dot: #1f8a56;
+  --color-consistent-bg: #e3ecfb;
+  --color-consistent-fg: #1d4a9e;
+  --color-consistent-dot: #2f63c9;
+  --color-conflict-bg: #fdecdc;
+  --color-conflict-fg: #8f4207;
+  --color-conflict-dot: #e07b1f;
+  --color-unknown-bg: #eceef2;
+  --color-unknown-fg: #485366;
+  --color-unknown-dot: #8b95a7;
+}
+
+html {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.card {
+  background: white;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+}
+
+.label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s;
+  cursor: pointer;
+}
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn-primary { background: var(--color-brand-600); color: white; }
+.btn-primary:hover:not(:disabled) { background: var(--color-brand-700); }
+.btn-secondary { background: white; color: var(--color-ink); border: 1px solid var(--color-line); }
+.btn-secondary:hover:not(:disabled) { border-color: #b9c4d6; background: var(--color-brand-50); }
+
+.input {
+  width: 100%;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+  background: white;
+}
+/* Compact inputs that sit on one line (claim editor). */
+.input.input-inline { width: auto; padding: 5px 10px; }
+.input:focus { outline: 2px solid var(--color-brand-500); outline-offset: -1px; border-color: transparent; }
+
+a.link { color: var(--color-brand-600); }
+a.link:hover { text-decoration: underline; }
+
+@media print {
+  .no-print { display: none !important; }
+  html, body { background: white; }
+  .card { border-color: #ccc; break-inside: avoid; }
+  @page { margin: 14mm; }
+}
