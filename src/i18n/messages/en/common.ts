@@ -39,6 +39,7 @@ export const labels = {
     vehicle_registration: "Vehicle registration",
     dashboard_photo: "Dashboard photo",
     battery_report: "Battery report",
+    obd_screenshot: "OBD-II diagnostic screenshot",
     insurance_or_repair_record: "Insurance or repair record",
     charging_log: "Charging log",
     other: "Other document",

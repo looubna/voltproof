@@ -38,6 +38,7 @@ export const labels: Messages["labels"] = {
     vehicle_registration: "자동차등록증",
     dashboard_photo: "계기판 사진",
     battery_report: "배터리 보고서",
+    obd_screenshot: "OBD-II 진단 스크린샷",
     insurance_or_repair_record: "보험·수리 기록",
     charging_log: "충전 기록",
     other: "기타 서류",

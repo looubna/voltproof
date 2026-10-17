@@ -16,7 +16,8 @@ const field = (name: string) => (m.labels.field as Record<string, string>)[name]
 const odo = (o: Odometer) => `${n(o.reading)} ${o.unit}`;
 /** "Odometer" → "odometer", while "VIN" and "DC …" keep their capitals. */
 const fieldInline = (name: string) => field(name).replace(/^[A-Z](?=[a-z])/, (c) => c.toLowerCase());
-const docTypeInline = (t: DocumentType) => m.labels.docType[t].toLowerCase();
+/** "Service invoice" → "service invoice", while "OBD-II …" keeps its capitals. */
+const docTypeInline = (t: DocumentType) => m.labels.docType[t].replace(/^[A-Z](?=[a-z])/, (c) => c.toLowerCase());
 const claimTypeInline = (t: ClaimType) => m.labels.claimType[t].toLowerCase();
 
 export type DocumentIssue = "signature" | "forensic" | "fileChecks" | "denied";

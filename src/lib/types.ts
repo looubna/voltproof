@@ -9,6 +9,7 @@ export type DocumentType =
   | "vehicle_registration"
   | "dashboard_photo"
   | "battery_report"
+  | "obd_screenshot"
   | "insurance_or_repair_record"
   | "charging_log"
   | "other";

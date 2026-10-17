@@ -38,6 +38,7 @@ export const labels: Messages["labels"] = {
     vehicle_registration: "Registrasi kendaraan",
     dashboard_photo: "Foto dasbor",
     battery_report: "Laporan baterai",
+    obd_screenshot: "Tangkapan layar diagnostik OBD-II",
     insurance_or_repair_record: "Catatan asuransi atau perbaikan",
     charging_log: "Log pengisian daya",
     other: "Dokumen lain",

@@ -11,7 +11,8 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const field = (name: string) => (m.labels.field as Record<string, string>)[name] ?? name;
 const fieldInline = (name: string) => field(name).replace(/^[A-Z](?=[a-z])/, (c) => c.toLowerCase());
 const docType = (t: DocumentType) => m.labels.docType[t];
-const docTypeInline = (t: DocumentType) => m.labels.docType[t].toLowerCase();
+/** "Faktur servis" → "faktur servis", while "… OBD-II" keeps its capitals. */
+const docTypeInline = (t: DocumentType) => m.labels.docType[t].replace(/^[A-Z](?=[a-z])/, (c) => c.toLowerCase());
 const claimTypeInline = (t: ClaimType) => m.labels.claimType[t].toLowerCase();
 const odo = (o: Odometer) => `${n(o.reading)} ${o.unit === "mi" ? "mil" : "km"}`;
 
