@@ -11,6 +11,7 @@ export const DOCUMENT_TYPES: DocumentType[] = [
   "vehicle_registration",
   "dashboard_photo",
   "battery_report",
+  "obd_screenshot",
   "insurance_or_repair_record",
   "charging_log",
   "other",
@@ -135,6 +136,7 @@ Rules:
 - Convert dates to YYYY-MM-DD only when the day, month and year are unambiguous; otherwise return null.
 - For photos and scanned images, give each value's bounding box as [ymin, xmin, ymax, xmax] scaled 0-1000.
 - Report the battery state of health exactly as the report states it. Do not compute or adjust it.
+- documentType: use "obd_screenshot" for screenshots of EV diagnostic mobile apps (e.g. LeafSpy, ScanMyTesla, Car Scanner, OBD Amigos) showing battery state of health, cell voltage histograms, or BMS statistics. For obd_screenshot, extract the battery state of health (SOH) into batterySohPercent, and the diagnostic tool or app name into batteryTestProvider or issuer.
 - damageRepair: only repairs of collision, body or structural damage, quoted from the document. Routine maintenance is not damage.
 - dcChargingSharePercent: only a share the document states explicitly. Do not calculate it from sessions or energy totals.
 - Do not judge whether the document is genuine, consistent or fraudulent. You only read.

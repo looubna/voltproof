@@ -109,7 +109,8 @@ export function readDocs(docs: CaseDocument[]) {
 }
 
 export function isBatteryReport(doc: CaseDocument) {
-  return docTypeOf(doc) === "battery_report";
+  const t = docTypeOf(doc);
+  return t === "battery_report" || t === "obd_screenshot";
 }
 
 function plural(n: number, word: string) {

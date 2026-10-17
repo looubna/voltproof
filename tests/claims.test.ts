@@ -53,6 +53,11 @@ describe("battery health claim", () => {
     const f = assess(c, [invoice("i1", "2026-05-01", 30000), battery(92)]);
     expect(f.evidence[0].documentId).toContain("bat-92");
   });
+
+  it("an OBD-II screenshot is recognised as a battery health source", () => {
+    const obd = makeDoc("obd-1", { documentType: "obd_screenshot", vin: VIN_A, batteryTestDate: "2026-09-20", batterySohPercent: 92, batteryTestProvider: "LeafSpy Pro" }, { provenance: "dealer_captured" });
+    expect(assess(c, [obd]).status).toBe("verified");
+  });
 });
 
 describe("mileage claim", () => {
