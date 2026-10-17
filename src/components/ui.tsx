@@ -22,23 +22,22 @@ const DOT_CLASS: Record<Status, string> = {
   unknown: "bg-unknown-dot",
 };
 
-export function StatusBadge({ status, detail, size = "md" }: { status: Status; detail?: string; size?: "sm" | "md" }) {
+/** A status as a coloured pill. Translated pages pass `label` and `meaning` in their language. */
+export function StatusBadge({ status, detail, size = "md", label, meaning }: { status: Status; detail?: string; size?: "sm" | "md"; label?: string; meaning?: string }) {
   return (
     <span
-      title={STATUS_MEANING[status]}
+      title={meaning ?? STATUS_MEANING[status]}
       className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full font-semibold ${STATUS_CLASS[status]} ${size === "sm" ? "px-2 py-0.5 text-xs" : "px-2.5 py-1 text-xs"}`}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${DOT_CLASS[status]}`} aria-hidden />
-      {STATUS_LABEL[status]}
+      {label ?? STATUS_LABEL[status]}
       {detail ? <span className="font-normal opacity-80">· {detail}</span> : null}
     </span>
   );
 }
 
-export function SyntheticBadge() {
-  return (
-    <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">Demo data</span>
-  );
+export function SyntheticBadge({ label = "Demo data" }: { label?: string }) {
+  return <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">{label}</span>;
 }
 
 export function StatusLegend() {
@@ -54,18 +53,26 @@ export function StatusLegend() {
   );
 }
 
+/** Status names and one-line meanings, for pages shown in another language. */
+export interface StatusCopy {
+  title: string;
+  labels: Record<Status, string>;
+  meanings: Record<Status, string>;
+}
+
 /** The four statuses with a line each, always on screen: a badge's hover title does not show on phones. */
-export function StatusKey({ className = "" }: { className?: string }) {
+export function StatusKey({ className = "", copy }: { className?: string; copy?: StatusCopy }) {
+  const title = copy?.title ?? "What the statuses mean";
   return (
-    <aside aria-label="What the statuses mean" className={`rounded-xl border border-line bg-[#fdfcfa] px-4 py-3 ${className}`}>
-      <p className="label mb-2">What the statuses mean</p>
+    <aside aria-label={title} className={`rounded-xl border border-line bg-[#fdfcfa] px-4 py-3 ${className}`}>
+      <p className="label mb-2">{title}</p>
       <dl className="grid gap-x-6 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-4">
         {STATUSES.map((s) => (
           <div key={s} className="grid content-start gap-1">
             <dt>
-              <StatusBadge status={s} size="sm" />
+              <StatusBadge status={s} size="sm" label={copy?.labels[s]} meaning={copy?.meanings[s]} />
             </dt>
-            <dd className="text-xs text-muted">{STATUS_SHORT[s]}</dd>
+            <dd className="text-xs text-muted">{copy?.meanings[s] ?? STATUS_SHORT[s]}</dd>
           </div>
         ))}
       </dl>

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useId, useState, useTransition, type FormEvent } from "react";
+import type { Messages } from "@/i18n/messages/en";
 import { PROVENANCE_LABEL } from "@/lib/labels";
 import { vinFormatProblem, normalizeVin } from "@/lib/normalize";
 import type { Provenance } from "@/lib/types";
@@ -60,7 +61,7 @@ function ErrorNote({ error }: { error: string | null }) {
 
 // ---------------------------------------------------------------- sign in
 
-export function LoginForm({ needsCode }: { needsCode: boolean }) {
+export function LoginForm({ needsCode, copy }: { needsCode: boolean; copy: Messages["login"] }) {
   const router = useRouter();
   const params = useSearchParams();
   const [name, setName] = useState("");
@@ -78,7 +79,9 @@ export function LoginForm({ needsCode }: { needsCode: boolean }) {
       router.replace(next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard");
       router.refresh();
     } catch (err) {
-      setError((err as Error).message);
+      // The API answers in English; show the message in the page's language instead.
+      const status = err instanceof ApiError ? err.status : 0;
+      setError(status === 401 ? copy.errors.code : status === 400 ? copy.errors.name : status === 500 ? copy.errors.config : copy.errors.generic);
       setBusy(false);
     }
   }
@@ -86,37 +89,42 @@ export function LoginForm({ needsCode }: { needsCode: boolean }) {
   return (
     <form onSubmit={submit} className="grid gap-4">
       <label className="grid gap-1 text-sm">
-        <span className="font-medium">Your name</span>
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" required minLength={2} placeholder="e.g. Sam Lee, Appraiser" />
-        <span className="text-xs text-muted">Recorded with every review decision you make.</span>
+        <span className="font-medium">{copy.name}</span>
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" required minLength={2} placeholder={copy.namePlaceholder} />
+        <span className="text-xs text-muted">{copy.nameHint}</span>
       </label>
       {needsCode && (
         <label className="grid gap-1 text-sm">
-          <span className="font-medium">Access code</span>
-          <input className="input" type="password" value={code} onChange={(e) => setCode(e.target.value)} required />
+          <span className="font-medium">{copy.code}</span>
+          <input className="input" type="password" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="current-password" required />
         </label>
       )}
       <ErrorNote error={error} />
       <button className="btn btn-primary justify-center" disabled={busy}>
-        {busy ? "Signing in…" : "Sign in"}
+        {busy ? copy.busy : copy.submit}
       </button>
     </form>
   );
 }
 
-export function SignOutButton({ className = "text-xs text-white/70 hover:text-white" }: { className?: string }) {
-  const router = useRouter();
+/**
+ * Signs out, then loads the landing page in full: a fresh page load also clears the
+ * router's cache of signed-in pages, so Back cannot show them again.
+ */
+export function SignOutButton({ className = "text-xs text-white/70 hover:text-white", label = "Sign out", redirectTo = "/" }: { className?: string; label?: string; redirectTo?: string }) {
+  const [busy, setBusy] = useState(false);
   return (
     <button
       type="button"
       className={className}
+      disabled={busy}
       onClick={async () => {
+        setBusy(true);
         await fetch("/api/auth/logout", { method: "POST" });
-        router.replace("/login");
-        router.refresh();
+        window.location.replace(redirectTo);
       }}
     >
-      Sign out
+      {label}
     </button>
   );
 }
@@ -1267,12 +1275,27 @@ export function CopyButton({ text }: { text: string }) {
 
 // ---------------------------------------------------------------- landing page forms
 
-export function WaitlistForm({ dark = true }: { dark?: boolean }) {
+type LandingCopy = Messages["landing"];
+
+/** The leads API answers in English; show its errors in the page's language, by status. */
+function leadError(err: unknown, errors: LandingCopy["errors"]) {
+  const status = err instanceof ApiError ? err.status : 0;
+  return status === 429 ? errors.rateLimited : status === 400 ? errors.invalid : errors.generic;
+}
+
+export function WaitlistForm({ dark = true, copy, errors }: { dark?: boolean; copy: LandingCopy["waitlist"]; errors: LandingCopy["errors"] }) {
+  // The landing page shows this form twice, so ids must be unique per instance.
+  const id = useId();
   const [email, setEmail] = useState("");
   const [website, setWebsite] = useState("");
   const [state, setState] = useState<"idle" | "busy" | "done">("idle");
   const [error, setError] = useState<string | null>(null);
-  if (state === "done") return <p className={`text-sm font-medium ${dark ? "text-[#7fd3b2]" : "text-[#1f6b50]"}`}>You're on the list. We'll email you once when your spot opens.</p>;
+  if (state === "done")
+    return (
+      <p role="status" className={`text-sm font-medium ${dark ? "text-[#7fd3b2]" : "text-[#1f6b50]"}`}>
+        {copy.done}
+      </p>
+    );
   return (
     <form
       className="grid gap-2"
@@ -1284,34 +1307,58 @@ export function WaitlistForm({ dark = true }: { dark?: boolean }) {
           await post("/api/leads", { kind: "waitlist", email, website });
           setState("done");
         } catch (err) {
-          setError((err as Error).message);
+          setError(leadError(err, errors));
           setState("idle");
         }
       }}
     >
-      <label className={`text-sm font-semibold ${dark ? "text-white" : "text-ink"}`} htmlFor="wl-email">
-        Email address
+      <label className={`text-sm font-semibold ${dark ? "text-white" : "text-ink"}`} htmlFor={`${id}-email`}>
+        {copy.label}
       </label>
       <div className="flex flex-col gap-2 sm:flex-row">
-        <input id="wl-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" className="w-full rounded-lg border-0 bg-[#f3f1ec] px-3 py-2.5 text-sm text-[#16202c] outline-none focus:ring-2 focus:ring-[#7fd3b2]" />
+        <input
+          id={`${id}-email`}
+          type="email"
+          required
+          autoComplete="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder={copy.placeholder}
+          aria-describedby={`${id}-note`}
+          className="w-full rounded-lg border-0 bg-[#f3f1ec] px-3 py-2.5 text-sm text-[#16202c] outline-none focus:ring-2 focus:ring-[#7fd3b2]"
+        />
         {/* Honeypot: hidden from people, filled by bots. */}
         <input tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} name="website" className="hidden" aria-hidden />
         <button disabled={state === "busy"} className="whitespace-nowrap rounded-lg bg-[#7fd3b2] px-5 py-2.5 text-sm font-semibold text-[#0f1c2b] hover:bg-[#95ddc0] disabled:opacity-60">
-          {state === "busy" ? "Joining…" : "Join the waitlist"}
+          {state === "busy" ? copy.busy : copy.submit}
         </button>
       </div>
-      {error ? <p className="text-xs text-red-300">{error}</p> : <p className={`text-xs ${dark ? "text-white/60" : "text-muted"}`}>We only email you about early access. Unsubscribe anytime.</p>}
+      {error ? (
+        <p id={`${id}-note`} role="alert" className={`text-xs ${dark ? "text-red-300" : "text-red-700"}`}>
+          {error}
+        </p>
+      ) : (
+        <p id={`${id}-note`} className={`text-xs ${dark ? "text-white/60" : "text-muted"}`}>
+          {copy.note}
+        </p>
+      )}
     </form>
   );
 }
 
-export function DemoRequestForm() {
+export function DemoRequestForm({ copy, errors }: { copy: LandingCopy["demoForm"]; errors: LandingCopy["errors"] }) {
   const [f, setF] = useState({ name: "", email: "", company: "", role: "", volumeRange: "", wantsToVerify: "", marketingOptIn: false, website: "" });
   const [state, setState] = useState<"idle" | "busy" | "done">("idle");
   const [error, setError] = useState<string | null>(null);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value });
-  if (state === "done") return <p className="rounded-lg bg-[#e6f4ee] px-4 py-3 text-sm font-medium text-[#1f6b50]">Thanks. We'll be in touch to arrange your demo.</p>;
-  const field = "w-full rounded-lg border border-[#d9d5cb] bg-[#fdfcfa] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#1f6b50]";
+  if (state === "done")
+    return (
+      <p role="status" className="rounded-lg bg-[#e6f4ee] px-4 py-3 text-sm font-medium text-[#1f6b50]">
+        {copy.done}
+      </p>
+    );
+  const field = "w-full rounded-lg border border-[#d9d5cb] bg-[#fdfcfa] px-3 py-2 text-sm font-normal outline-none focus:ring-2 focus:ring-[#1f6b50]";
+  const optional = <span className="font-normal text-muted">{copy.optional}</span>;
   return (
     <form
       className="grid gap-4"
@@ -1323,33 +1370,42 @@ export function DemoRequestForm() {
           await post("/api/leads", { kind: "demo", ...f, volumeRange: f.volumeRange || undefined, wantsToVerify: f.wantsToVerify || undefined });
           setState("done");
         } catch (err) {
-          setError((err as Error).message);
+          setError(leadError(err, errors));
           setState("idle");
         }
       }}
     >
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="grid gap-1 text-sm font-semibold">Full name<input required className={field} value={f.name} onChange={set("name")} /></label>
-        <label className="grid gap-1 text-sm font-semibold">Work email<input required type="email" placeholder="name@company.com" className={field} value={f.email} onChange={set("email")} /></label>
-        <label className="grid gap-1 text-sm font-semibold">Company<input required className={field} value={f.company} onChange={set("company")} /></label>
         <label className="grid gap-1 text-sm font-semibold">
-          Your role
+          {copy.name}
+          <input required autoComplete="name" className={field} value={f.name} onChange={set("name")} />
+        </label>
+        <label className="grid gap-1 text-sm font-semibold">
+          {copy.email}
+          <input required type="email" autoComplete="email" placeholder={copy.emailPlaceholder} className={field} value={f.email} onChange={set("email")} />
+        </label>
+        <label className="grid gap-1 text-sm font-semibold">
+          {copy.company}
+          <input required autoComplete="organization" className={field} value={f.company} onChange={set("company")} />
+        </label>
+        <label className="grid gap-1 text-sm font-semibold">
+          {copy.role}
           <select required className={field} value={f.role} onChange={set("role")}>
-            <option value="">Choose one</option>
-            <option value="lender">Lender or lessor</option>
-            <option value="dealer">Dealer</option>
-            <option value="marketplace">Marketplace</option>
-            <option value="insurer">Insurer</option>
-            <option value="fleet">Fleet manager</option>
-            <option value="buyer">Buyer</option>
-            <option value="other">Other</option>
+            <option value="">{copy.roleChoose}</option>
+            {(Object.keys(copy.roles) as (keyof typeof copy.roles)[]).map((r) => (
+              <option key={r} value={r}>
+                {copy.roles[r]}
+              </option>
+            ))}
           </select>
         </label>
       </div>
       <label className="grid gap-1 text-sm font-semibold">
-        <span>Used EVs you handle per month <span className="font-normal text-muted">(optional)</span></span>
+        <span>
+          {copy.volume} {optional}
+        </span>
         <select className={field} value={f.volumeRange} onChange={set("volumeRange")}>
-          <option value="">Choose a range</option>
+          <option value="">{copy.volumeChoose}</option>
           <option value="1-10">1–10</option>
           <option value="11-50">11–50</option>
           <option value="51-200">51–200</option>
@@ -1357,18 +1413,20 @@ export function DemoRequestForm() {
         </select>
       </label>
       <label className="grid gap-1 text-sm font-semibold">
-        <span>What would you like to verify? <span className="font-normal text-muted">(optional)</span></span>
-        <textarea className={`${field} min-h-20`} placeholder="For example: battery health on trade-ins before we finance them" value={f.wantsToVerify} onChange={set("wantsToVerify")} maxLength={1000} />
+        <span>
+          {copy.verify} {optional}
+        </span>
+        <textarea className={`${field} min-h-20`} placeholder={copy.verifyPlaceholder} value={f.wantsToVerify} onChange={set("wantsToVerify")} maxLength={1000} />
       </label>
       <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={f.marketingOptIn} onChange={set("marketingOptIn")} /> Send me occasional product updates <span className="text-muted">(optional)</span>
+        <input type="checkbox" checked={f.marketingOptIn} onChange={set("marketingOptIn")} /> {copy.updates} <span className="text-muted">{copy.optional}</span>
       </label>
       <input tabIndex={-1} autoComplete="off" value={f.website} onChange={set("website")} name="website" className="hidden" aria-hidden />
       <ErrorNote error={error} />
       <button disabled={state === "busy"} className="rounded-lg bg-[#1f6b50] px-5 py-3 text-sm font-semibold text-white hover:bg-[#185a43] disabled:opacity-60">
-        {state === "busy" ? "Sending…" : "Request a demo"}
+        {state === "busy" ? copy.busy : copy.submit}
       </button>
-      <p className="text-xs text-muted">We only use these details to arrange your demo. We don't sell them.</p>
+      <p className="text-xs text-muted">{copy.privacy}</p>
     </form>
   );
 }

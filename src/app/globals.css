@@ -1,7 +1,9 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  /* IBM Plex has no Hangul: Korean falls back to each platform's Korean UI font, as most Korean sites do
+     (a self-hosted Korean webfont would add megabytes for every visitor). */
+  --font-sans: var(--font-plex-sans), "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, monospace;
 
   --color-navy-950: #0f1c2b;
@@ -44,6 +46,12 @@ html {
 body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Korean: break lines between words, not inside them (the browser default for Hangul). */
+:lang(ko) {
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
 
 .card {

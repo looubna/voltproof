@@ -18,13 +18,15 @@ npm run dev            # http://localhost:3000
 Sign in with any name. No access code is needed until `VOLTPROOF_ACCESS_CODE` is set. Five synthetic cases are created on first load.
 
 ```bash
-npm test               # 155 tests: rules, claims, grounding, listing parsing, leads, Gemini retries, workflow, report, brand assets, dashboard and history
+npm test               # 163 tests: rules, claims, grounding, listing parsing, leads, Gemini retries, workflow, report, brand assets, dashboard, history and translations
 npm run eval           # evaluation on synthetic data → eval/RESULTS.md
 npm run samples        # regenerate the synthetic PDFs/PNGs in /samples (already committed)
 npm run brand          # regenerate the favicon and app icons from src/assets/brand (already committed)
 ```
 
 The logo artwork in `src/assets/brand` comes from the landing page design. Pages use it through `src/components/logo.tsx`: `Logo` (mark and light wordmark, for dark backgrounds only) and `LogoMark` (the square mark, any background).
+
+**Languages.** The landing page, sign-in page, dashboard and app header are available in English, Bahasa Indonesia and Korean (`src/i18n/messages`; `en.ts` is the source and the others must match its shape, which the type checker and `tests/i18n.test.ts` enforce). The landing page has one URL per language (`/`, `/id`, `/ko`, with `hreflang` links); a first visit to `/` follows the browser's language, and a choice in the language switcher is remembered in the `NEXT_LOCALE` cookie, which the signed-in app also uses. Other app pages are still English.
 
 ### Demo walkthrough
 
