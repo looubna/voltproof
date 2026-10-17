@@ -2,7 +2,6 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { DashboardFilters, WelcomePanel } from "@/components/dashboard-client";
 import { DateTime, EmptyState, PageTitle, StatusBadge, StatusKey, SyntheticBadge } from "@/components/ui";
-import { INTL_LOCALE } from "@/i18n/config";
 import { formatPlural, format } from "@/i18n/format";
 import { rich } from "@/i18n/rich";
 import { getI18n } from "@/i18n/server";
@@ -39,7 +38,6 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const { locale, m } = await getI18n();
   const t = m.dashboard;
   const count = (forms: Parameters<typeof formatPlural>[1], n: number, values?: Record<string, string | number>) => formatPlural(locale, forms, n, values);
-  const statusCopy = { title: t.legend, labels: m.status, meanings: m.statusMeaning };
 
   const sp = await searchParams;
   const query = parseDashboardQuery(sp);
@@ -50,11 +48,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     all = await listCases({ includeArchived: true });
   } catch (e) {
     console.error(e);
-    return (
-      <div lang={locale}>
-        <EmptyState title={t.loadError.title}>{t.loadError.body}</EmptyState>
-      </div>
-    );
+    return <EmptyState title={t.loadError.title}>{t.loadError.body}</EmptyState>;
   }
   const archivedCount = all.filter((c) => c.archivedAt).length;
   const activeRows = dashboardRows(all.filter((c) => !c.archivedAt));
@@ -70,8 +64,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const cta = (show: Show) => (isCurrent(show) ? t.stats.showing : t.stats.show);
 
   return (
-    // The dashboard is translated, unlike most app pages (see the lang note in the app layout).
-    <div lang={locale}>
+    <>
       <PageTitle
         eyebrow={t.eyebrow}
         title={t.title}
@@ -143,7 +136,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                     <div className="min-w-0">
                       <p className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold text-ink group-hover:underline">{vehicle || t.list.vehicleMissing}</span>
-                        {c.synthetic ? <SyntheticBadge label={m.demoData} /> : null}
+                        {c.synthetic ? <SyntheticBadge /> : null}
                       </p>
                       <p className="mt-0.5 text-sm text-muted">
                         {c.caseNumber}
@@ -156,13 +149,13 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                     </div>
                     <div className="flex flex-wrap content-start gap-1">
                       {counts.map(({ st, n }) => (
-                        <StatusBadge key={st} status={st} detail={String(n)} size="sm" label={m.status[st]} meaning={m.statusMeaning[st]} />
+                        <StatusBadge key={st} status={st} detail={String(n)} size="sm" />
                       ))}
                     </div>
                     <div className="text-sm md:text-right">
                       <span className={s.stage === "awaiting_review" ? "font-semibold text-conflict-fg" : "text-muted"}>{t.stage[s.stage]}</span>
                       {s.openReviewItems ? <span className="block text-xs text-muted">{count(t.list.openItems, s.openReviewItems)}</span> : null}
-                      <span className="block whitespace-nowrap text-xs text-muted">{rich(t.list.opened, { date: <DateTime iso={c.createdAt} dateOnly locale={INTL_LOCALE[locale]} /> })}</span>
+                      <span className="block whitespace-nowrap text-xs text-muted">{rich(t.list.opened, { date: <DateTime iso={c.createdAt} dateOnly /> })}</span>
                     </div>
                   </Link>
                 </li>
@@ -172,9 +165,9 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         )}
       </section>
 
-      <StatusKey className="mt-6" copy={statusCopy} />
+      <StatusKey className="mt-6" />
 
       <p className="mt-6 text-xs text-muted">{format(t.disclaimer, { conflict: m.status.conflict })}</p>
-    </div>
+    </>
   );
 }

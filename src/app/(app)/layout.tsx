@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { AppNav } from "@/components/app-nav";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Logo } from "@/components/logo";
-import { DEFAULT_LOCALE, landingPath } from "@/i18n/config";
+import { landingPath } from "@/i18n/config";
 import type { Messages } from "@/i18n/messages/en";
 import { getI18n } from "@/i18n/server";
 import { currentUser } from "@/lib/auth";
@@ -49,9 +49,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </header>
       )}
-      {/* Only the dashboard and sign-in page are translated so far: the rest of the app is marked as
-          English, so screen readers pronounce it correctly while the header follows the chosen language. */}
-      <main id="main" lang={locale === DEFAULT_LOCALE ? undefined : DEFAULT_LOCALE} className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      {/* Every page is in the chosen language (<html lang>). Text kept as written, such as the AI's drafts
+          or a check's own English message, is marked with its own lang where it appears. */}
+      <main id="main" className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         {children}
       </main>
     </>

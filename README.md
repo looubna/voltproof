@@ -18,7 +18,7 @@ npm run dev            # http://localhost:3000
 Sign in with any name. No access code is needed until `VOLTPROOF_ACCESS_CODE` is set. Five synthetic cases are created on first load.
 
 ```bash
-npm test               # 163 tests: rules, claims, grounding, listing parsing, leads, Gemini retries, workflow, report, brand assets, dashboard, history and translations
+npm test               # 173 tests: rules, claims, grounding, listing parsing, leads, Gemini retries, workflow, report, brand assets, dashboard, history and translations
 npm run eval           # evaluation on synthetic data → eval/RESULTS.md
 npm run samples        # regenerate the synthetic PDFs/PNGs in /samples (already committed)
 npm run brand          # regenerate the favicon and app icons from src/assets/brand (already committed)
@@ -26,7 +26,9 @@ npm run brand          # regenerate the favicon and app icons from src/assets/br
 
 The logo artwork in `src/assets/brand` comes from the landing page design. Pages use it through `src/components/logo.tsx`: `Logo` (mark and light wordmark, for dark backgrounds only) and `LogoMark` (the square mark, any background).
 
-**Languages.** The landing page, sign-in page, dashboard and app header are available in English, Bahasa Indonesia and Korean (`src/i18n/messages`; `en.ts` is the source and the others must match its shape, which the type checker and `tests/i18n.test.ts` enforce). The landing page has one URL per language (`/`, `/id`, `/ko`, with `hreflang` links); a first visit to `/` follows the browser's language, and a choice in the language switcher is remembered in the `NEXT_LOCALE` cookie, which the signed-in app also uses. Other app pages are still English.
+**Languages.** Every page is available in English, Bahasa Indonesia and Korean. The page text is in `src/i18n/messages` (`en/` is the source; `id/` and `ko/` must match its shape, which the type checker and `tests/i18n.test.ts` enforce). The landing page has one URL per language (`/`, `/id`, `/ko`, with `hreflang` links); a first visit to `/` follows the browser's language, and a choice in the language switcher is remembered in the `NEXT_LOCALE` cookie, which the signed-in app also uses. Server errors are returned in the requester's language (`src/i18n/errors.ts`).
+
+Check results and claim assessments are stored in English: they are the audit record that reviews, the report and the evidence agent refer to. Pages show them in the reader's language by running the same rules again with that language's wording (`src/i18n/rules`, `src/lib/localize.ts`), and use the translation only when the English re-run matches the stored record exactly; otherwise the stored English is shown, marked as English. Case history events store their values next to the English text, so each is worded in the reader's language (`src/lib/history.ts`; older events are read back from their English text). Statuses and decisions always come from the record, and the JSON report export stays in English. Some text is deliberately not translated and is shown as written, marked `lang="en"` where it is English: what the AI models read and write (extracted values and quotes, the evidence agent's steps and drafts, its explanations of edited documents), what was read from uploaded files (values, quotes, file names), the forensic and file checks' own messages (they describe and quote the file), answers from outside services such as the VIN decoder, and anything people typed (notes, references, the seller's listing).
 
 ### Demo walkthrough
 

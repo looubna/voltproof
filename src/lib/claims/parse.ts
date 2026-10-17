@@ -4,6 +4,7 @@
 // Either way every proposal must quote a span that really is in the input.
 import { Type, type Schema } from "@google/genai";
 import { z } from "zod";
+import { errorText } from "../../i18n/errors";
 import type { AppConfig } from "../config";
 import { callGemini } from "../extraction/gemini";
 import { normText } from "../extraction/grounding";
@@ -20,16 +21,17 @@ export interface ClaimProposal {
 }
 
 /** Validates a stated value for a claim type. Returns an error message or null. */
-export function validateStated(type: ClaimType, s: ClaimStated): string | null {
+/** Why a stated value cannot be right, as an error code (the messages already name the claim type). */
+export function validateStated(type: ClaimType, s: ClaimStated): "sohRange" | "mileageRange" | "accidentFlag" | "chargingRange" | null {
   switch (type) {
     case "battery_soh":
-      return typeof s.number === "number" && s.number > 0 && s.number <= 100 ? null : "Battery health must be a percentage between 1 and 100.";
+      return typeof s.number === "number" && s.number > 0 && s.number <= 100 ? null : "sohRange";
     case "odometer":
-      return typeof s.number === "number" && s.number >= 0 && s.number <= 1_000_000 && (s.unit === "km" || s.unit === "mi") ? null : "Mileage must be a number up to 1,000,000 in km or mi.";
+      return typeof s.number === "number" && s.number >= 0 && s.number <= 1_000_000 && (s.unit === "km" || s.unit === "mi") ? null : "mileageRange";
     case "accident_history":
-      return typeof s.flag === "boolean" ? null : "Say whether the seller reports accidents or not.";
+      return typeof s.flag === "boolean" ? null : "accidentFlag";
     case "fast_charging":
-      return typeof s.number === "number" && s.number >= 0 && s.number <= 100 ? null : "Fast-charging share must be a percentage between 0 and 100.";
+      return typeof s.number === "number" && s.number >= 0 && s.number <= 100 ? null : "chargingRange";
   }
 }
 
@@ -178,7 +180,7 @@ export function validateModelClaims(input: string, json: unknown): { proposals: 
     else if (c.type !== "accident_history") stated.unit = "%";
     const err = validateStated(c.type, stated);
     if (err) {
-      dropped.push(`${c.type}: ${err}`);
+      dropped.push(`${c.type}: ${errorText(err, "en")}`);
       continue;
     }
     proposals.push({ type: c.type, stated, sourceText: c.sourceText.trim() });
@@ -193,12 +195,14 @@ export interface ParseResult {
   dropped: string[];
   usage?: ModelUsage;
   note?: string;
+  /** Why the rule-based parser was used, so the page can say it in the reader's language. */
+  noteCode?: "demo" | "fallback";
 }
 
 export async function parseListing(text: string, cfg: AppConfig): Promise<ParseResult> {
   const input = text.slice(0, MAX_LISTING_CHARS);
   if (cfg.aiMode !== "vertex") {
-    return { mode: "rules", model: null, proposals: parseClaimsWithRules(input), dropped: [], note: "Demo mode: claims were found with a simple rule-based parser, not Gemini." };
+    return { mode: "rules", model: null, proposals: parseClaimsWithRules(input), dropped: [], note: "Demo mode: claims were found with a simple rule-based parser, not Gemini.", noteCode: "demo" };
   }
   try {
     const { result, usage } = await callGemini(
@@ -211,6 +215,6 @@ export async function parseListing(text: string, cfg: AppConfig): Promise<ParseR
     return { mode: "vertex-gemini", model: cfg.geminiModel, ...result, usage };
   } catch (e) {
     console.error(JSON.stringify({ severity: "WARNING", step: "parse_claims", error: e instanceof Error ? e.message : String(e) }));
-    return { mode: "rules", model: null, proposals: parseClaimsWithRules(input), dropped: [], note: "Gemini was unavailable, so a simple rule-based parser was used instead." };
+    return { mode: "rules", model: null, proposals: parseClaimsWithRules(input), dropped: [], note: "Gemini was unavailable, so a simple rule-based parser was used instead.", noteCode: "fallback" };
   }
 }

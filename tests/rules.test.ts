@@ -13,7 +13,8 @@ import {
   vehicleConsistency,
   vinConsistency,
 } from "@/lib/rules";
-import { vinFormatProblem } from "@/lib/normalize";
+import { errorText } from "@/i18n/errors";
+import { vinFormatIssue } from "@/lib/normalize";
 import { makeDoc, REF, vehicle, VIN_A, VIN_B } from "./helpers";
 
 const input = (documents: ReturnType<typeof makeDoc>[], v = vehicle) => ({ vehicle: v, documents, referenceDate: REF });
@@ -271,10 +272,12 @@ describe("documented rule checks", () => {
 
 describe("VIN format", () => {
   it("explains what is wrong with a VIN typed into a case", () => {
-    expect(vinFormatProblem("")).toBeNull();
-    expect(vinFormatProblem(VIN_A)).toBeNull();
-    expect(vinFormatProblem("5yj3-e1ea0mf934821")).toBeNull();
-    expect(vinFormatProblem("IOQ123")).toMatch(/I, O or Q/);
-    expect(vinFormatProblem("5YJ3E1EA0MF93482")).toMatch(/this one has 16/);
+    expect(vinFormatIssue("")).toBeNull();
+    expect(vinFormatIssue(VIN_A)).toBeNull();
+    expect(vinFormatIssue("5yj3-e1ea0mf934821")).toBeNull();
+    expect(vinFormatIssue("IOQ123")).toEqual({ code: "vinIOQ" });
+    expect(vinFormatIssue("5YJ3E1EA0MF93482")).toEqual({ code: "vinLength", count: 16 });
+    expect(errorText("vinIOQ", "en")).toMatch(/I, O or Q/);
+    expect(errorText("vinLength", "en", { count: 16 })).toMatch(/this one has 16/);
   });
 });

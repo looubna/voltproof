@@ -1,6 +1,10 @@
 // 한국어 (Korean). Same shape as en.ts (enforced by the Messages type).
-import { plural } from "../format";
-import type { Messages } from "./en";
+import { plural } from "../../format";
+import type { Messages } from "../en";
+import * as caseMessages from "./case";
+import * as common from "./common";
+import * as evidence from "./evidence";
+import * as pages from "./pages";
 
 export const ko: Messages = {
   meta: {
@@ -321,4 +325,8 @@ export const ko: Messages = {
     legend: "상태의 의미",
     disclaimer: "VoltProof는 증빙 검토 도구입니다. 차량 가치를 평가하거나, 배터리를 시험하거나, 서류를 인증하거나, 사기를 자동으로 탐지하지 않습니다. {conflict}(으)로 표시된 항목은 사람이 검토해야 합니다.",
   },
+  ...common,
+  ...caseMessages,
+  ...evidence,
+  ...pages,
 };

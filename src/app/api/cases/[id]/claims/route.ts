@@ -9,7 +9,7 @@ type Ctx = { params: Promise<{ id: string }> };
 export const GET = route<Ctx>(async (_req, ctx) => {
   const { id } = await ctx.params;
   const c = await getCase(id);
-  if (!c) throw new UserError("Case not found.");
+  if (!c) throw new UserError("caseNotFound");
   const assessments = currentFindings(c).filter((f) => f.claim);
   return NextResponse.json({ claims: (c.claims ?? []).filter((x) => !x.withdrawn), assessments, summary: claimSummaryLine(assessments) });
 });

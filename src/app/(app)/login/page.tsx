@@ -15,8 +15,7 @@ export default async function LoginPage() {
   const { locale, m } = await getI18n();
   const t = m.login;
   return (
-    // Translated, unlike most app pages (see the lang note in the app layout).
-    <div lang={locale} className="mx-auto mt-2 max-w-md">
+    <div className="mx-auto mt-2 max-w-md">
       <div className="mb-6 flex items-center justify-between gap-3">
         <Link href={landingPath(locale)} className="link inline-flex min-h-11 items-center gap-1 text-sm">
           <span aria-hidden>←</span> {t.home}

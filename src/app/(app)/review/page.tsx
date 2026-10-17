@@ -3,10 +3,13 @@ import { ReviewFilters, ReviewForm } from "@/components/client";
 import { CaseHeader } from "@/components/case-header";
 import { NavLink } from "@/components/nav-link";
 import { DateTime, EmptyState, FindingCard, PageTitle, StatusKey, SyntheticBadge } from "@/components/ui";
+import { format, formatPlural } from "@/i18n/format";
+import { rich } from "@/i18n/rich";
+import { getI18n } from "@/i18n/server";
 import { requireUser } from "@/lib/auth";
 import { getCase, listCases } from "@/lib/cases";
 import { reviewQueue, reviewsFor } from "@/lib/derive";
-import { RESOLUTION_LABEL, STATUS_LABEL } from "@/lib/labels";
+import { findingView, type FindingView } from "@/lib/localize";
 import type { Case } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +28,8 @@ function hrefWith(sp: Search, changes: Partial<Search>) {
 export default async function ReviewQueuePage({ searchParams }: { searchParams: Promise<Search> }) {
   const user = await requireUser();
   const sp = await searchParams;
+  const { locale, m } = await getI18n();
+  const t = m.review;
   const showAll = sp.show === "all";
   const status = sp.status === "conflict" || sp.status === "unknown" ? sp.status : null;
   const query = (sp.q ?? "").trim().toLowerCase().slice(0, 80);
@@ -33,12 +38,25 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
   const single = sp.case ? await getCase(sp.case).catch(() => null) : null;
   const cases: Case[] = sp.case ? (single ? [single] : []) : await listCases();
 
+  // Each case's findings in the reader's language, worked out only for cases with something to review.
+  const views = new Map<string, FindingView>();
+  const viewOf = (c: Case) => {
+    let v = views.get(c.id);
+    if (!v) views.set(c.id, (v = findingView(c, locale)));
+    return v;
+  };
+
   const vehicleOf = (c: Case) => [c.vehicle.year, c.vehicle.make, c.vehicle.model].filter(Boolean).join(" ");
   const items = cases.flatMap((c) =>
     reviewQueue(c)
       .filter((i) => showAll || i.review.open)
       .filter((i) => !status || i.finding.status === status)
-      .filter((i) => !query || [i.finding.title, i.finding.result, c.caseNumber, vehicleOf(c)].some((t) => t.toLowerCase().includes(query)))
+      .filter((i) => {
+        if (!query) return true;
+        // Search what the reader sees and the stored English, so either language finds an item.
+        const shown = viewOf(c)(i.finding);
+        return [shown.title, shown.result, i.finding.title, i.finding.result, c.caseNumber, vehicleOf(c)].some((x) => x.toLowerCase().includes(query));
+      })
       .sort((a, b) => (a.finding.status === "conflict" ? 0 : 1) - (b.finding.status === "conflict" ? 0 : 1))
       .map((i) => ({ ...i, c })),
   );
@@ -58,21 +76,22 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
   const caseOptions = sp.case ? [] : cases.filter((c) => reviewQueue(c).length).map((c) => ({ id: c.id, label: `${c.caseNumber} · ${vehicleOf(c)}` }));
   const filtered = !!(status || query);
   const pill = (on: boolean) => `inline-flex items-center rounded-full px-3 py-1 ${on ? "bg-brand-600 text-white" : "bg-[#fdfcfa] text-muted ring-1 ring-line hover:text-ink"}`;
+  const formCopy = { ...t.form, saving: m.common.saving, requestFailed: m.errors.requestFailed };
 
   return (
     <>
       {single ? (
         <CaseHeader c={single} active="review" />
       ) : (
-        <PageTitle eyebrow="People resolve" title="Human review queue">
-          Conflicts and missing evidence that need a person. Your decision is recorded separately; the original machine finding is never changed.
+        <PageTitle eyebrow={t.eyebrow} title={t.title}>
+          {t.intro}
         </PageTitle>
       )}
 
       {sp.case && !single ? (
-        <EmptyState title="Case not found">
+        <EmptyState title={t.caseNotFound}>
           <Link href="/review" className="link">
-            Show the whole review queue
+            {t.showAll}
           </Link>
         </EmptyState>
       ) : (
@@ -80,38 +99,38 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
           <div className="mb-5 grid gap-3">
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <NavLink href={hrefWith(sp, { show: undefined, page: undefined })} aria-current={!showAll ? "page" : undefined} className={pill(!showAll)} scroll={false}>
-                Open items
+                {t.open}
               </NavLink>
               <NavLink href={hrefWith(sp, { show: "all", page: undefined })} aria-current={showAll ? "page" : undefined} className={pill(showAll)} scroll={false}>
-                All review items
+                {t.all}
               </NavLink>
               <span className="ml-2 text-muted" data-testid="review-count">
-                {total} item{total === 1 ? "" : "s"}
-                {pages > 1 ? ` · page ${page} of ${pages}` : ""}
+                {formatPlural(locale, t.count, total)}
+                {pages > 1 ? format(t.page, { page, pages }) : ""}
               </span>
             </div>
-            <ReviewFilters cases={caseOptions} showCase={!sp.case} />
+            <ReviewFilters cases={caseOptions} showCase={!sp.case} copy={{ ...t.filters, updating: m.common.updating }} />
             <StatusKey />
           </div>
 
           {groups.length === 0 ? (
             single && single.documents.length === 0 ? (
-              <EmptyState title="Nothing to review yet">
-                Upload the seller&apos;s documents first; anything that needs a person will appear here.{" "}
+              <EmptyState title={t.nothingYet}>
+                {t.nothingYetBody}{" "}
                 <Link href={`/cases/${single.id}#upload`} className="link">
-                  Upload documents
+                  {t.uploadDocuments}
                 </Link>
               </EmptyState>
             ) : (
-              <EmptyState title={filtered ? "No items match these filters" : showAll ? "Nothing needs review" : "No open items"}>
+              <EmptyState title={filtered ? t.noMatch : showAll ? t.nothingNeeds : t.noOpen}>
                 {filtered ? (
                   <Link href={hrefWith(sp, { status: undefined, q: undefined, page: undefined })} className="link">
-                    Clear the filters
+                    {t.clearFilters}
                   </Link>
                 ) : showAll ? (
-                  "No findings in this view require human review."
+                  t.noneRequire
                 ) : (
-                  "Every flagged item has been resolved by a reviewer."
+                  t.allResolved
                 )}
               </EmptyState>
             )
@@ -132,22 +151,24 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                     {items.map(({ finding, review }) => {
                       const history = reviewsFor(c, finding.id);
                       return (
-                        <FindingCard key={finding.id} caseId={c.id} finding={finding} review={review}>
+                        <FindingCard key={finding.id} caseId={c.id} finding={viewOf(c)(finding)} review={review}>
                           {history.length > 1 && (
                             <details className="mb-3 text-sm">
-                              <summary className="cursor-pointer text-muted">Review history ({history.length})</summary>
+                              <summary className="cursor-pointer text-muted">{format(t.history, { count: history.length })}</summary>
                               <ol className="mt-2 grid gap-2 border-l-2 border-line pl-3">
                                 {history.map((r) => (
                                   <li key={r.id} className="text-xs">
-                                    <span className="font-medium">{RESOLUTION_LABEL[r.resolution]}</span> by {r.reviewer} · <DateTime iso={r.at} />
-                                    <div className="text-muted">Machine status at the time: {STATUS_LABEL[r.findingSnapshot.status]}</div>
+                                    {rich(format(t.historyLine, { resolution: m.labels.resolution[r.resolution], reviewer: r.reviewer }), {
+                                      date: <DateTime iso={r.at} />,
+                                    })}
+                                    <div className="text-muted">{format(t.machineStatus, { status: m.status[r.findingSnapshot.status] })}</div>
                                     <div>{r.note}</div>
                                   </li>
                                 ))}
                               </ol>
                             </details>
                           )}
-                          <ReviewForm caseId={c.id} findingId={finding.id} reviewer={user} />
+                          <ReviewForm caseId={c.id} findingId={finding.id} reviewer={user} copy={formCopy} />
                         </FindingCard>
                       );
                     })}
@@ -158,20 +179,18 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
           )}
 
           {pages > 1 && (
-            <nav aria-label="Review queue pages" className="mt-8 flex flex-wrap items-center justify-between gap-3 text-sm">
+            <nav aria-label={t.pages} className="mt-8 flex flex-wrap items-center justify-between gap-3 text-sm">
               {page > 1 ? (
                 <NavLink href={hrefWith(sp, { page: String(page - 1) })} className="btn btn-secondary">
-                  ← Previous
+                  {t.previous}
                 </NavLink>
               ) : (
                 <span />
               )}
-              <span className="text-muted">
-                Items {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}
-              </span>
+              <span className="text-muted">{format(t.items, { from: (page - 1) * PAGE_SIZE + 1, to: Math.min(page * PAGE_SIZE, total), total })}</span>
               {page < pages ? (
                 <NavLink href={hrefWith(sp, { page: String(page + 1) })} className="btn btn-secondary">
-                  Next →
+                  {t.next}
                 </NavLink>
               ) : (
                 <span />

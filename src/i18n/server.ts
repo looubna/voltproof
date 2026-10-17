@@ -3,12 +3,9 @@ import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
 import { cache } from "react";
 import { DEFAULT_LOCALE, INTL_LOCALE, LOCALES, LOCALE_COOKIE, PATH_LOCALE_HEADER, isLocale, landingPath, type Locale } from "./config";
-import { en, type Messages } from "./messages/en";
-import { id } from "./messages/id";
-import { ko } from "./messages/ko";
+import { MESSAGES } from "./messages/catalog";
+import type { Messages } from "./messages/en";
 import { negotiateLocale } from "./negotiate";
-
-const MESSAGES: Record<Locale, Messages> = { en, id, ko };
 
 export function getMessages(locale: Locale): Messages {
   return MESSAGES[locale];

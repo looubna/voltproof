@@ -1,15 +1,23 @@
 "use client";
 
+// Interactive parts of the app. Client components get the words they show as `copy` props
+// from the server page (only what each one needs, not the whole catalog), and the page's
+// language from useI18n() for plurals and numbers.
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useState, useTransition, type FormEvent } from "react";
+import { useI18n } from "@/i18n/client";
+import { INTL_LOCALE } from "@/i18n/config";
+import { format, formatPlural } from "@/i18n/format";
 import type { Messages } from "@/i18n/messages/en";
-import { PROVENANCE_LABEL } from "@/lib/labels";
-import { vinFormatProblem, normalizeVin } from "@/lib/normalize";
-import type { Provenance } from "@/lib/types";
+import { rich } from "@/i18n/rich";
+import { normalizeVin, vinFormatIssue } from "@/lib/normalize";
+import type { ClaimType, Provenance, VerificationMethod } from "@/lib/types";
 import { checkDigit, isNorthAmerican } from "@/lib/vin";
 
-/** An API error with its HTTP status and any structured details the route returned. */
+type M = Messages;
+
+/** An API error with its HTTP status and any structured details. The server words `message` in the reader's language. */
 class ApiError extends Error {
   constructor(
     message: string,
@@ -23,11 +31,17 @@ class ApiError extends Error {
 async function send(method: "POST" | "PATCH", url: string, body: unknown) {
   const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(data.error ?? `Request failed (${res.status})`, res.status, data);
+  if (!res.ok) throw new ApiError(typeof data.error === "string" ? data.error : "", res.status, data);
   return data;
 }
 
 const post = (url: string, body: unknown) => send("POST", url, body);
+
+/** What went wrong, for the person: the server's message, or a general one in the page's language. */
+function problem(e: unknown, requestFailed: string) {
+  if (e instanceof ApiError && e.message) return e.message;
+  return format(requestFailed, { status: e instanceof ApiError ? e.status : "—" });
+}
 
 /**
  * router.refresh() inside a transition: `refreshing` stays true until the fresh
@@ -39,15 +53,16 @@ function useRefresh() {
   return { router, refreshing, refresh: () => startTransition(() => router.refresh()) };
 }
 
-/** Seconds since `since`, updated every second while mounted. */
-function Elapsed({ since }: { since?: number }) {
+/** Seconds since `since`, updated every second while mounted. `template` is e.g. "{count} s". */
+function Elapsed({ since, template }: { since?: number | null; template: string }) {
+  const { locale } = useI18n();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
   if (!since) return null;
-  return <span className="tabular-nums"> {Math.max(0, Math.round((now - since) / 1000))} s</span>;
+  return <span className="tabular-nums"> {format(template, { count: Math.max(0, Math.round((now - since) / 1000)).toLocaleString(INTL_LOCALE[locale]) })}</span>;
 }
 
 function ErrorNote({ error }: { error: string | null }) {
@@ -147,23 +162,26 @@ interface PendingFile {
 
 type UpdateFile = (i: number, p: Partial<PendingFile>) => void;
 
-const ACCEPT = ".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png";
-const STATE_TEXT: Record<UploadState, string> = {
-  queued: "Ready to upload",
-  uploading: "Uploading…",
-  reading: "Reading document…",
-  done: "Read and checked",
-  not_read: "Stored, not read",
-  error: "Failed",
+/** What the upload controls say, in the page's language. */
+export type UploadCopy = M["upload"] & {
+  provenance: M["labels"]["provenance"];
+  remove: string;
+  working: string;
+  updating: string;
+  seconds: string;
+  requestFailed: string;
 };
+
+const ACCEPT = ".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png";
 // The source decides what a document can verify (only dealer-captured readings are Verified),
 // so it is never guessed from the file name: every file starts at the least-trusted source.
 const DEFAULT_PROVENANCE: Provenance = "seller_provided";
+const PROVENANCES: Provenance[] = ["seller_provided", "dealer_captured", "dealer_ordered", "unknown"];
 const UPLOAD_CONCURRENCY = 3;
 
 /** "about a minute", "a few seconds": how long reading one document usually takes. */
-function typicalWait(seconds: number) {
-  return seconds >= 45 ? "about a minute" : seconds >= 15 ? `about ${seconds} seconds` : "a few seconds";
+function typicalWait(seconds: number, t: UploadCopy["wait"]) {
+  return seconds >= 45 ? t.minute : seconds >= 15 ? format(t.seconds, { count: seconds }) : t.few;
 }
 
 export function FilePicker({
@@ -174,6 +192,7 @@ export function FilePicker({
   disabled,
   onSourceSaved,
   typicalSeconds,
+  copy,
 }: {
   files: PendingFile[];
   setFiles: (f: PendingFile[]) => void;
@@ -183,42 +202,44 @@ export function FilePicker({
   onSourceSaved?: () => void;
   /** How long reading one document usually takes on this server, for the progress message. */
   typicalSeconds: number;
+  copy: UploadCopy;
 }) {
+  const { locale } = useI18n();
   const [error, setError] = useState<string | null>(null);
   function add(list: FileList | null) {
     if (!list) return;
     const ok: PendingFile[] = [];
     const rejected: string[] = [];
     for (const f of Array.from(list)) {
-      if (!/\.(pdf|jpe?g|png)$/i.test(f.name)) rejected.push(`${f.name} (type not supported)`);
-      else if (f.size > maxMb * 1024 * 1024) rejected.push(`${f.name} (over ${maxMb} MB)`);
+      if (!/\.(pdf|jpe?g|png)$/i.test(f.name)) rejected.push(format(copy.wrongType, { file: f.name }));
+      else if (f.size > maxMb * 1024 * 1024) rejected.push(format(copy.tooBig, { file: f.name, mb: maxMb }));
       else ok.push({ file: f, provenance: DEFAULT_PROVENANCE, state: "queued" });
     }
-    setError(rejected.length ? `Not added: ${rejected.join(", ")}. Use PDF, JPG or PNG up to ${maxMb} MB.` : null);
+    setError(rejected.length ? format(copy.notAdded, { files: rejected.join(", "), mb: maxMb }) : null);
     setFiles([...files, ...ok]);
   }
   async function changeSource(i: number, provenance: Provenance) {
     const p = files[i];
     if (!p.docId || !p.caseId) return update(i, { provenance });
     // Already stored: save the correction to the document (audited, rules re-run).
-    update(i, { provenance, sourceNote: "Saving source…" });
+    update(i, { provenance, sourceNote: copy.savingSource });
     try {
       await send("PATCH", `/api/cases/${p.caseId}/documents/${p.docId}`, { provenance });
-      update(i, { sourceNote: "Source saved." });
+      update(i, { sourceNote: copy.sourceSaved });
       onSourceSaved?.();
     } catch (e) {
-      update(i, { provenance: p.provenance, sourceNote: `Source not changed: ${(e as Error).message}` });
+      update(i, { provenance: p.provenance, sourceNote: format(copy.sourceNotChanged, { error: problem(e, copy.requestFailed) }) });
     }
   }
   return (
     <div className="grid gap-3">
       <label className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-line bg-brand-50/50 px-6 py-8 text-center hover:border-brand-500 ${disabled ? "pointer-events-none opacity-60" : ""}`}>
-        <span className="text-sm font-medium text-ink">Choose documents to upload</span>
-        <span className="mt-1 text-xs text-muted">Invoices, registration, dashboard photos, battery reports · PDF, JPG or PNG · up to {maxMb} MB each</span>
+        <span className="text-sm font-medium text-ink">{copy.choose}</span>
+        <span className="mt-1 text-xs text-muted">{format(copy.hint, { mb: maxMb })}</span>
         <input type="file" multiple accept={ACCEPT} className="sr-only" onChange={(e) => (add(e.target.files), (e.target.value = ""))} disabled={disabled} />
       </label>
       <ErrorNote error={error} />
-      <UploadProgress files={files} typicalSeconds={typicalSeconds} />
+      <UploadProgress files={files} typicalSeconds={typicalSeconds} copy={copy} />
       {files.length > 0 && (
         <ul className="divide-y divide-line rounded-xl border border-line bg-[#fdfcfa]">
           {files.map((p, i) => {
@@ -227,35 +248,35 @@ export function FilePicker({
               <li key={i} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{p.file.name}</div>
-                  <div className="text-xs text-muted">{(p.file.size / 1024).toFixed(0)} KB</div>
+                  <div className="text-xs text-muted">{format(copy.size, { size: Math.round(p.file.size / 1024).toLocaleString(INTL_LOCALE[locale]) })}</div>
                 </div>
                 <select
                   className="input w-auto py-1 text-xs"
                   value={p.provenance}
                   disabled={working}
                   onChange={(e) => changeSource(i, e.target.value as Provenance)}
-                  aria-label={`Where ${p.file.name} came from`}
-                  title={p.docId ? "Changing this updates the stored document and is recorded in the case history." : undefined}
+                  aria-label={format(copy.sourceFor, { file: p.file.name })}
+                  title={p.docId ? copy.sourceHint : undefined}
                 >
-                  {(Object.keys(PROVENANCE_LABEL) as Provenance[]).map((k) => (
+                  {PROVENANCES.map((k) => (
                     <option key={k} value={k}>
-                      {PROVENANCE_LABEL[k]}
+                      {copy.provenance[k]}
                     </option>
                   ))}
                 </select>
                 <span className={`w-40 text-right text-xs font-medium ${p.state === "error" ? "text-red-700" : p.state === "done" ? "text-verified-fg" : p.state === "not_read" ? "text-conflict-fg" : "text-muted"}`}>
-                  {STATE_TEXT[p.state]}
-                  {working ? <Elapsed key={p.startedAt} since={p.startedAt} /> : null}
+                  {copy.state[p.state]}
+                  {working ? <Elapsed key={p.startedAt} since={p.startedAt} template={copy.seconds} /> : null}
                 </span>
                 {p.state === "reading" ? (
                   <div className="grid w-full gap-1">
-                    <div className="progress" role="progressbar" aria-label={`Reading ${p.file.name}`} aria-valuetext="In progress" />
-                    <p className="text-xs text-muted">Reading and checking usually takes {typicalWait(typicalSeconds)} per document. Keep this page open.</p>
+                    <div className="progress" role="progressbar" aria-label={format(copy.readingLabel, { file: p.file.name })} aria-valuetext={copy.inProgress} />
+                    <p className="text-xs text-muted">{format(copy.takes, { wait: typicalWait(typicalSeconds, copy.wait) })}</p>
                   </div>
                 ) : null}
                 {p.state === "queued" && (
                   <button type="button" className="text-xs text-muted hover:text-red-700" onClick={() => setFiles(files.filter((_, j) => j !== i))}>
-                    Remove
+                    {copy.remove}
                   </button>
                 )}
                 {p.message && p.state !== "done" ? <p className="w-full text-xs text-muted">{p.message}</p> : null}
@@ -270,7 +291,8 @@ export function FilePicker({
 }
 
 /** One live summary for screen readers and sighted users: "2 of 4 documents done". */
-function UploadProgress({ files, typicalSeconds }: { files: PendingFile[]; typicalSeconds: number }) {
+function UploadProgress({ files, typicalSeconds, copy }: { files: PendingFile[]; typicalSeconds: number; copy: UploadCopy }) {
+  const { locale } = useI18n();
   const started = files.filter((f) => f.state !== "queued");
   if (!started.length) return <p className="sr-only" aria-live="polite" />;
   const finished = files.filter((f) => f.state === "done" || f.state === "not_read" || f.state === "error").length;
@@ -279,8 +301,8 @@ function UploadProgress({ files, typicalSeconds }: { files: PendingFile[]; typic
   return (
     <p aria-live="polite" className="text-sm font-medium text-ink">
       {working
-        ? `${finished} of ${files.length} document${files.length === 1 ? "" : "s"} done. Each takes ${typicalWait(typicalSeconds)}; up to ${UPLOAD_CONCURRENCY} are read at once.`
-        : `All ${files.length} document${files.length === 1 ? "" : "s"} processed${failed ? `, ${failed} failed` : ""}.`}
+        ? formatPlural(locale, copy.progress, files.length, { done: finished, wait: typicalWait(typicalSeconds, copy.wait), parallel: UPLOAD_CONCURRENCY })
+        : formatPlural(locale, copy.finished, files.length, { failed: failed ? format(copy.failedCount, { count: failed }) : "" })}
     </p>
   );
 }
@@ -289,7 +311,7 @@ function UploadProgress({ files, typicalSeconds }: { files: PendingFile[]; typic
  * Uploads and reads every queued or failed file, a few at a time, updating
  * per-file state. A file that was stored but failed to read is only re-read.
  */
-async function uploadAll(caseId: string, files: PendingFile[], update: UpdateFile) {
+async function uploadAll(caseId: string, files: PendingFile[], update: UpdateFile, copy: UploadCopy) {
   const jobs = files.map((f, i) => ({ f, i })).filter(({ f }) => f.state === "queued" || f.state === "error");
   let failures = 0;
   let next = 0;
@@ -305,21 +327,22 @@ async function uploadAll(caseId: string, files: PendingFile[], update: UpdateFil
           form.set("provenance", f.provenance);
           const res = await fetch(`/api/cases/${caseId}/documents`, { method: "POST", body: form });
           const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(data.error ?? "Upload failed");
+          if (!res.ok) throw new ApiError(typeof data.error === "string" ? data.error : copy.uploadFailed, res.status, data);
           docId = data.id as string;
           update(i, { caseId, docId });
         }
         update(i, { state: "reading", startedAt: Date.now(), message: undefined });
         const r = await post(`/api/cases/${caseId}/documents/${docId}/process`, {});
-        if (r.status === "extracted") update(i, { state: "done", message: r.mode === "demo-fixture" ? "Sample document recognised: demo values, no AI used." : undefined });
-        else if (r.status === "not_configured") update(i, { state: "not_read", message: r.error });
+        if (r.status === "extracted") update(i, { state: "done", message: r.mode === "demo-fixture" ? copy.sample : undefined });
+        else if (r.status === "not_configured") update(i, { state: "not_read", message: copy.notConfigured });
         else {
           failures++;
-          update(i, { state: "error", message: r.error ?? "Extraction failed" });
+          // What the reader returned (an error from the AI service, for example) is shown as it came.
+          update(i, { state: "error", message: r.error ?? copy.readFailed });
         }
       } catch (e) {
         failures++;
-        update(i, { state: "error", message: (e as Error).message });
+        update(i, { state: "error", message: problem(e, copy.requestFailed) });
       }
     }
   }
@@ -341,7 +364,16 @@ interface CaseMatch {
   archived: boolean;
 }
 
-export function NewCaseForm({ maxMb, typicalSeconds }: { maxMb: number; typicalSeconds: number }) {
+export interface NewCaseCopy {
+  form: M["newCase"]["form"];
+  upload: UploadCopy;
+  vin: Pick<M["errors"], "vinChars" | "vinIOQ" | "vinLength">;
+  optional: string;
+}
+
+export function NewCaseForm({ maxMb, typicalSeconds, copy }: { maxMb: number; typicalSeconds: number; copy: NewCaseCopy }) {
+  const { locale } = useI18n();
+  const t = copy.form;
   const router = useRouter();
   const { files, setFiles, update } = useFileQueue();
   const [vehicle, setVehicle] = useState({ make: "", model: "", year: "", vin: "", reference: "" });
@@ -353,14 +385,15 @@ export function NewCaseForm({ maxMb, typicalSeconds }: { maxMb: number; typicalS
   const [caseId, setCaseId] = useState<string | null>(null);
 
   const vin = normalizeVin(vehicle.vin);
-  const vinProblem = vinFormatProblem(vin);
+  const vinIssue = vinFormatIssue(vin);
+  const vinProblem = vinIssue ? format(copy.vin[vinIssue.code], { count: vinIssue.count ?? "" }) : null;
   const showVinProblem = !!vinProblem && (vinTouched || vin.length >= 17);
   // A wrong check digit is only a hint: outside North America many makers do not use one.
-  const vinHint = !vinProblem && vin && isNorthAmerican(vin) && checkDigit(vin) === "invalid" ? "Position 9 does not match this VIN's check digit. Check the VIN plate for a mistyped character." : null;
+  const vinHint = !vinProblem && vin && isNorthAmerican(vin) && checkDigit(vin) === "invalid" ? t.vinCheckDigit : null;
   const needsConfirm = duplicates.length > 0 && !confirmDuplicate;
 
   async function checkDuplicates(v: string) {
-    if (!v || vinFormatProblem(v)) return setDuplicates([]);
+    if (!v || vinFormatIssue(v)) return setDuplicates([]);
     try {
       const res = await fetch(`/api/cases?vin=${encodeURIComponent(v)}`);
       const data = (await res.json().catch(() => ({}))) as { cases?: CaseMatch[] };
@@ -379,12 +412,12 @@ export function NewCaseForm({ maxMb, typicalSeconds }: { maxMb: number; typicalS
     try {
       const id = caseId ?? (await post("/api/cases", { ...vehicle, vin, allowDuplicateVin: confirmDuplicate })).id;
       setCaseId(id);
-      const failures = await uploadAll(id, files, update);
+      const failures = await uploadAll(id, files, update, copy.upload);
       if (failures === 0) router.push(`/cases/${id}`);
-      else setError(`${failures} document(s) failed. The case was created; you can retry or open it.`);
+      else setError(formatPlural(locale, t.failed, failures));
     } catch (err) {
       if (err instanceof ApiError && err.status === 409 && Array.isArray(err.data.duplicates)) setDuplicates(err.data.duplicates as CaseMatch[]);
-      else setError((err as Error).message);
+      else setError(problem(err, copy.upload.requestFailed));
     } finally {
       setBusy(false);
     }
@@ -394,22 +427,22 @@ export function NewCaseForm({ maxMb, typicalSeconds }: { maxMb: number; typicalS
   return (
     <form onSubmit={submit} className="grid content-start gap-6">
       <section className="card p-5">
-        <h2 className="mb-4 font-semibold">1 · Vehicle details</h2>
+        <h2 className="mb-4 font-semibold">{t.vehicle}</h2>
         <div className="grid items-start gap-4 sm:grid-cols-2">
           <label className="grid gap-1 text-sm">
-            <span className="font-medium">Make</span>
-            <input className="input" value={vehicle.make} onChange={set("make")} required placeholder="e.g. Hyundai" disabled={!!caseId} />
+            <span className="font-medium">{t.make}</span>
+            <input className="input" value={vehicle.make} onChange={set("make")} required placeholder={t.makePlaceholder} disabled={!!caseId} />
           </label>
           <label className="grid gap-1 text-sm">
-            <span className="font-medium">Model</span>
-            <input className="input" value={vehicle.model} onChange={set("model")} required placeholder="e.g. Ioniq 5" disabled={!!caseId} />
+            <span className="font-medium">{t.model}</span>
+            <input className="input" value={vehicle.model} onChange={set("model")} required placeholder={t.modelPlaceholder} disabled={!!caseId} />
           </label>
           <label className="grid gap-1 text-sm">
-            <span className="font-medium">Model year</span>
-            <input className="input" value={vehicle.year} onChange={set("year")} inputMode="numeric" pattern="\d{4}" placeholder="e.g. 2022" disabled={!!caseId} />
+            <span className="font-medium">{t.year}</span>
+            <input className="input" value={vehicle.year} onChange={set("year")} inputMode="numeric" pattern="\d{4}" placeholder={t.yearPlaceholder} disabled={!!caseId} />
           </label>
           <label className="grid gap-1 text-sm">
-            <span className="font-medium">VIN</span>
+            <span className="font-medium">{t.vin}</span>
             <input
               className="input font-mono uppercase"
               value={vehicle.vin}
@@ -425,28 +458,28 @@ export function NewCaseForm({ maxMb, typicalSeconds }: { maxMb: number; typicalS
               maxLength={20}
               autoComplete="off"
               spellCheck={false}
-              placeholder="17 characters, from the VIN plate"
+              placeholder={t.vinPlaceholder}
               disabled={!!caseId}
               aria-invalid={showVinProblem}
               aria-describedby="vin-help"
             />
             <span id="vin-help" className={`text-xs ${showVinProblem ? "font-medium text-red-700" : vinHint ? "text-conflict-fg" : "text-muted"}`}>
-              {showVinProblem ? vinProblem : (vinHint ?? "Optional. Every document is compared against this VIN.")}
+              {showVinProblem ? vinProblem : (vinHint ?? t.vinHelp)}
             </span>
           </label>
           <label className="grid gap-1 text-sm sm:col-span-2">
             <span className="font-medium">
-              Your reference <span className="font-normal text-muted">(optional)</span>
+              {t.reference} <span className="font-normal text-muted">{copy.optional}</span>
             </span>
-            <input className="input" value={vehicle.reference} onChange={set("reference")} maxLength={80} placeholder="e.g. Stock A-1042, or the seller's name" disabled={!!caseId} aria-describedby="ref-help" />
+            <input className="input" value={vehicle.reference} onChange={set("reference")} maxLength={80} placeholder={t.referencePlaceholder} disabled={!!caseId} aria-describedby="ref-help" />
             <span id="ref-help" className="text-xs text-muted">
-              Shown on the dashboard so you can tell similar cases apart.
+              {t.referenceHelp}
             </span>
           </label>
         </div>
         {duplicates.length > 0 && !caseId && (
           <div role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-            <p className="font-medium">{duplicates.length === 1 ? "A case already exists" : `${duplicates.length} cases already exist`} for this VIN:</p>
+            <p className="font-medium">{formatPlural(locale, t.duplicates, duplicates.length)}</p>
             <ul className="mt-1 grid gap-0.5">
               {duplicates.slice(0, 5).map((d) => (
                 <li key={d.id}>
@@ -454,34 +487,33 @@ export function NewCaseForm({ maxMb, typicalSeconds }: { maxMb: number; typicalS
                     {d.caseNumber}
                   </Link>{" "}
                   · {d.vehicle}
-                  {d.archived ? " (archived)" : ""}
+                  {d.archived ? t.archived : ""}
                 </li>
               ))}
-              {duplicates.length > 5 ? <li className="text-xs">and {duplicates.length - 5} more</li> : null}
+              {duplicates.length > 5 ? <li className="text-xs">{format(t.more, { count: duplicates.length - 5 })}</li> : null}
             </ul>
             <label className="mt-2 flex items-start gap-2">
               <input type="checkbox" className="mt-0.5" checked={confirmDuplicate} onChange={(e) => setConfirmDuplicate(e.target.checked)} />
-              <span>This is a separate review of the same vehicle. Create a new case anyway.</span>
+              <span>{t.confirmDuplicate}</span>
             </label>
           </div>
         )}
       </section>
       <section className="card p-5">
-        <h2 className="mb-1 font-semibold">2 · Documents</h2>
+        <h2 className="mb-1 font-semibold">{t.documents}</h2>
         <p className="mb-4 text-sm text-muted">
-          Say where each document came from. Every file starts as <strong>{PROVENANCE_LABEL[DEFAULT_PROVENANCE]}</strong>; choose <strong>{PROVENANCE_LABEL.dealer_captured}</strong> only for photos your staff took
-          themselves. Only those readings can be marked Verified.
+          {rich(t.sources, { seller: <strong>{copy.upload.provenance[DEFAULT_PROVENANCE]}</strong>, captured: <strong>{copy.upload.provenance.dealer_captured}</strong> })}
         </p>
-        <FilePicker files={files} setFiles={setFiles} update={update} maxMb={maxMb} disabled={busy} typicalSeconds={typicalSeconds} />
+        <FilePicker files={files} setFiles={setFiles} update={update} maxMb={maxMb} disabled={busy} typicalSeconds={typicalSeconds} copy={copy.upload} />
       </section>
       <ErrorNote error={error} />
       <div className="flex flex-wrap items-center gap-3">
         <button className="btn btn-primary" disabled={busy || (!caseId && (needsConfirm || showVinProblem))}>
-          {busy ? "Working…" : caseId ? "Retry failed uploads" : files.length ? `Create case and check ${files.length} document${files.length === 1 ? "" : "s"}` : "Create case"}
+          {busy ? copy.upload.working : caseId ? t.retry : files.length ? formatPlural(locale, t.createWith, files.length) : t.create}
         </button>
         {caseId && (
           <button type="button" className="btn btn-secondary" onClick={() => router.push(`/cases/${caseId}`)}>
-            Open case
+            {t.open}
           </button>
         )}
       </div>
@@ -489,7 +521,8 @@ export function NewCaseForm({ maxMb, typicalSeconds }: { maxMb: number; typicalS
   );
 }
 
-export function AddDocuments({ caseId, maxMb, typicalSeconds }: { caseId: string; maxMb: number; typicalSeconds: number }) {
+export function AddDocuments({ caseId, maxMb, typicalSeconds, copy }: { caseId: string; maxMb: number; typicalSeconds: number; copy: UploadCopy }) {
+  const { locale } = useI18n();
   const { refresh, refreshing } = useRefresh();
   const { files, setFiles, update } = useFileQueue();
   const [busy, setBusy] = useState(false);
@@ -497,7 +530,7 @@ export function AddDocuments({ caseId, maxMb, typicalSeconds }: { caseId: string
   const working = busy || refreshing;
   return (
     <div className="grid gap-3">
-      <FilePicker files={files} setFiles={setFiles} update={update} maxMb={maxMb} disabled={working} onSourceSaved={refresh} typicalSeconds={typicalSeconds} />
+      <FilePicker files={files} setFiles={setFiles} update={update} maxMb={maxMb} disabled={working} onSourceSaved={refresh} typicalSeconds={typicalSeconds} copy={copy} />
       {files.length > 0 && (
         <div className="flex gap-2">
           <button
@@ -505,16 +538,16 @@ export function AddDocuments({ caseId, maxMb, typicalSeconds }: { caseId: string
             disabled={working || pending === 0}
             onClick={async () => {
               setBusy(true);
-              await uploadAll(caseId, files, update);
+              await uploadAll(caseId, files, update, copy);
               setBusy(false);
               refresh();
             }}
           >
-            {busy ? "Working…" : refreshing ? "Updating…" : `Upload and check ${pending} document${pending === 1 ? "" : "s"}`}
+            {busy ? copy.working : refreshing ? copy.updating : formatPlural(locale, copy.submit, pending)}
           </button>
           {!working && pending === 0 && (
             <button className="btn btn-secondary" onClick={() => setFiles([])}>
-              Clear list
+              {copy.clear}
             </button>
           )}
         </div>
@@ -524,7 +557,17 @@ export function AddDocuments({ caseId, maxMb, typicalSeconds }: { caseId: string
 }
 
 /** Where a stored document came from, editable. Saving re-runs the rules and is recorded in the history. */
-export function DocumentSourceSelect({ caseId, docId, value }: { caseId: string; docId: string; value: Provenance }) {
+export function DocumentSourceSelect({
+  caseId,
+  docId,
+  value,
+  copy,
+}: {
+  caseId: string;
+  docId: string;
+  value: Provenance;
+  copy: M["document"]["source"] & { provenance: M["labels"]["provenance"]; requestFailed: string };
+}) {
   const { refresh, refreshing } = useRefresh();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -534,7 +577,7 @@ export function DocumentSourceSelect({ caseId, docId, value }: { caseId: string;
         className="input w-auto py-1 text-xs"
         value={value}
         disabled={busy || refreshing}
-        aria-label="Where this document came from"
+        aria-label={copy.label}
         onChange={async (e) => {
           setBusy(true);
           setError(null);
@@ -542,25 +585,25 @@ export function DocumentSourceSelect({ caseId, docId, value }: { caseId: string;
             await send("PATCH", `/api/cases/${caseId}/documents/${docId}`, { provenance: e.target.value });
             refresh();
           } catch (err) {
-            setError((err as Error).message);
+            setError(problem(err, copy.requestFailed));
           } finally {
             setBusy(false);
           }
         }}
       >
-        {(Object.keys(PROVENANCE_LABEL) as Provenance[]).map((k) => (
+        {PROVENANCES.map((k) => (
           <option key={k} value={k}>
-            {PROVENANCE_LABEL[k]}
+            {copy.provenance[k]}
           </option>
         ))}
       </select>
-      {busy || refreshing ? <span className="text-xs text-muted">Saving and re-checking…</span> : null}
+      {busy || refreshing ? <span className="text-xs text-muted">{copy.saving}</span> : null}
       {error ? <span className="text-xs text-red-700">{error}</span> : null}
     </span>
   );
 }
 
-export function ReprocessButton({ caseId, docId, label }: { caseId: string; docId: string; label: string }) {
+export function ReprocessButton({ caseId, docId, label, copy }: { caseId: string; docId: string; label: string; copy: { reading: string; updating: string; requestFailed: string } }) {
   const { refresh, refreshing } = useRefresh();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -576,13 +619,13 @@ export function ReprocessButton({ caseId, docId, label }: { caseId: string; docI
             await post(`/api/cases/${caseId}/documents/${docId}/process`, {});
             refresh();
           } catch (e) {
-            setError((e as Error).message);
+            setError(problem(e, copy.requestFailed));
           } finally {
             setBusy(false);
           }
         }}
       >
-        {busy ? "Reading…" : refreshing ? "Updating…" : label}
+        {busy ? copy.reading : refreshing ? copy.updating : label}
       </button>
       {error ? <span className="text-xs text-red-700">{error}</span> : null}
     </span>
@@ -591,27 +634,25 @@ export function ReprocessButton({ caseId, docId, label }: { caseId: string; docI
 
 // ---------------------------------------------------------------- review
 
-const RESOLUTIONS = [
-  { value: "resolved", label: "Resolved", hint: "The issue is explained and no longer affects the decision." },
-  { value: "unresolved", label: "Unresolved", hint: "Reviewed, but the issue still stands." },
-  { value: "more_info_requested", label: "Needs more information", hint: "Waiting on the seller, a workshop or a test." },
-];
+const RESOLUTIONS = ["resolved", "unresolved", "more_info_requested"] as const;
 const MIN_NOTE = 3;
 
-export function ReviewForm({ caseId, findingId, reviewer }: { caseId: string; findingId: string; reviewer: string }) {
+export function ReviewForm({ caseId, findingId, reviewer, copy }: { caseId: string; findingId: string; reviewer: string; copy: M["review"]["form"] & { saving: string; requestFailed: string } }) {
   const { refresh, refreshing } = useRefresh();
   const [resolution, setResolution] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const missing = [!resolution && "choose a decision", note.trim().length < MIN_NOTE && `write a note (at least ${MIN_NOTE} characters)`].filter(Boolean) as string[];
+  const noDecision = !resolution;
+  const shortNote = note.trim().length < MIN_NOTE;
+  const toSave = noDecision && shortNote ? format(copy.toSaveBoth, { count: MIN_NOTE }) : noDecision ? copy.toSaveDecision : shortNote ? format(copy.toSaveNote, { count: MIN_NOTE }) : null;
   const noteId = `note-${findingId}`;
   const working = busy || refreshing;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (missing.length) return;
+    if (toSave) return;
     setBusy(true);
     setError(null);
     setSaved(false);
@@ -623,7 +664,7 @@ export function ReviewForm({ caseId, findingId, reviewer }: { caseId: string; fi
       // Re-render the queue, counts and case header with the new decision; "Saved." shows once that is on screen.
       refresh();
     } catch (err) {
-      setError((err as Error).message);
+      setError(problem(err, copy.requestFailed));
     } finally {
       setBusy(false);
     }
@@ -631,27 +672,27 @@ export function ReviewForm({ caseId, findingId, reviewer }: { caseId: string; fi
 
   return (
     <form onSubmit={submit} className="grid gap-3 rounded-lg border border-line bg-canvas p-4">
-      <div className="label">Record your decision</div>
+      <div className="label">{copy.title}</div>
       <fieldset className="grid gap-2 sm:grid-cols-3">
-        <legend className="sr-only">Decision (required)</legend>
-        {RESOLUTIONS.map((r) => (
-          <label key={r.value} className={`cursor-pointer rounded-lg border bg-[#fdfcfa] p-2.5 text-sm ${resolution === r.value ? "border-brand-600 ring-1 ring-brand-600" : "border-line"}`}>
-            <input type="radio" name={`res-${findingId}`} value={r.value} checked={resolution === r.value} onChange={() => setResolution(r.value)} className="sr-only" />
-            <span className="font-medium">{r.label}</span>
-            <span className="mt-0.5 block text-xs text-muted">{r.hint}</span>
+        <legend className="sr-only">{copy.decision}</legend>
+        {RESOLUTIONS.map((value) => (
+          <label key={value} className={`cursor-pointer rounded-lg border bg-[#fdfcfa] p-2.5 text-sm ${resolution === value ? "border-brand-600 ring-1 ring-brand-600" : "border-line"}`}>
+            <input type="radio" name={`res-${findingId}`} value={value} checked={resolution === value} onChange={() => setResolution(value)} className="sr-only" />
+            <span className="font-medium">{copy.resolutions[value].label}</span>
+            <span className="mt-0.5 block text-xs text-muted">{copy.resolutions[value].hint}</span>
           </label>
         ))}
       </fieldset>
       <label className="grid gap-1 text-sm" htmlFor={noteId}>
         <span className="font-medium">
-          Reviewer note <span className="font-normal text-muted">(required)</span>
+          {copy.note} <span className="font-normal text-muted">{copy.required}</span>
         </span>
         <textarea
           id={noteId}
           className="input min-h-20"
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder="What did you check, and what did you find?"
+          placeholder={copy.placeholder}
           maxLength={2000}
           required
           aria-describedby={`${noteId}-hint`}
@@ -659,16 +700,16 @@ export function ReviewForm({ caseId, findingId, reviewer }: { caseId: string; fi
       </label>
       <ErrorNote error={error} />
       <div className="flex flex-wrap items-center gap-3">
-        <button className="btn btn-primary" disabled={working || missing.length > 0} aria-describedby={`${noteId}-hint`}>
-          {working ? "Saving…" : "Save review"}
+        <button className="btn btn-primary" disabled={working || !!toSave} aria-describedby={`${noteId}-hint`}>
+          {working ? copy.saving : copy.save}
         </button>
         <span id={`${noteId}-hint`} className="text-xs text-muted">
-          {missing.length && !working ? <span className="font-medium text-ink">To save, {missing.join(" and ")}. </span> : null}
-          Recorded as {reviewer} with a timestamp. The machine finding is kept unchanged.
+          {toSave && !working ? <span className="font-medium text-ink">{toSave} </span> : null}
+          {format(copy.recorded, { reviewer })}
         </span>
         {saved && !working ? (
           <span role="status" className="text-xs font-medium text-verified-fg">
-            Saved.
+            {copy.saved}
           </span>
         ) : null}
       </div>
@@ -676,19 +717,18 @@ export function ReviewForm({ caseId, findingId, reviewer }: { caseId: string; fi
   );
 }
 
-const STATUS_FILTERS = [
-  { value: "", label: "Any status" },
-  { value: "conflict", label: "Conflicts" },
-  { value: "unknown", label: "Missing evidence" },
-];
-
 /** Case, status and text filters for the review queue. Each change updates the URL, so a view can be shared or reloaded. */
-export function ReviewFilters({ cases, showCase }: { cases: { id: string; label: string }[]; showCase: boolean }) {
+export function ReviewFilters({ cases, showCase, copy }: { cases: { id: string; label: string }[]; showCase: boolean; copy: M["review"]["filters"] & { updating: string } }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
   const [pending, startTransition] = useTransition();
   const [q, setQ] = useState(params.get("q") ?? "");
+  const statusFilters = [
+    { value: "", label: copy.any },
+    { value: "conflict", label: copy.conflicts },
+    { value: "unknown", label: copy.missing },
+  ];
 
   function apply(changes: Record<string, string>) {
     const next = new URLSearchParams(params);
@@ -710,8 +750,8 @@ export function ReviewFilters({ cases, showCase }: { cases: { id: string; label:
       }}
     >
       {showCase && (
-        <select className="input input-inline w-auto" value={params.get("case") ?? ""} onChange={(e) => apply({ case: e.target.value })} aria-label="Filter by case">
-          <option value="">All cases</option>
+        <select className="input input-inline w-auto" value={params.get("case") ?? ""} onChange={(e) => apply({ case: e.target.value })} aria-label={copy.case}>
+          <option value="">{copy.allCases}</option>
           {cases.map((c) => (
             <option key={c.id} value={c.id}>
               {c.label}
@@ -719,20 +759,20 @@ export function ReviewFilters({ cases, showCase }: { cases: { id: string; label:
           ))}
         </select>
       )}
-      <select className="input input-inline w-auto" value={params.get("status") ?? ""} onChange={(e) => apply({ status: e.target.value })} aria-label="Filter by status">
-        {STATUS_FILTERS.map((s) => (
+      <select className="input input-inline w-auto" value={params.get("status") ?? ""} onChange={(e) => apply({ status: e.target.value })} aria-label={copy.status}>
+        {statusFilters.map((s) => (
           <option key={s.value} value={s.value}>
             {s.label}
           </option>
         ))}
       </select>
-      <input className="input input-inline w-48" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search findings" aria-label="Search findings" maxLength={80} />
+      <input className="input input-inline w-48" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={copy.search} aria-label={copy.search} maxLength={80} />
       <button className="btn btn-secondary py-1 text-xs" disabled={pending}>
-        Search
+        {copy.submit}
       </button>
       {pending ? (
         <span role="status" className="text-xs text-muted">
-          Updating…
+          {copy.updating}
         </span>
       ) : null}
     </form>
@@ -741,27 +781,27 @@ export function ReviewFilters({ cases, showCase }: { cases: { id: string; label:
 
 // ---------------------------------------------------------------- misc
 
-export function PrintButton() {
+export function PrintButton({ label }: { label: string }) {
   return (
     <button className="btn btn-primary" onClick={() => window.print()}>
-      Print / save as PDF
+      {label}
     </button>
   );
 }
 
-export function ResetCaseButton({ caseId }: { caseId: string }) {
+export function ResetCaseButton({ caseId, copy }: { caseId: string; copy: M["caseHeader"]["reset"] & { cancel: string } }) {
   const { refresh, refreshing } = useRefresh();
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   if (!armed)
     return (
       <button className="btn btn-secondary" onClick={() => setArmed(true)}>
-        Reset demo case
+        {copy.start}
       </button>
     );
   return (
     <span className="inline-flex items-center gap-2 text-sm">
-      <span className="text-muted">Discard reviews and uploads?</span>
+      <span className="text-muted">{copy.confirm}</span>
       <button
         className="btn btn-primary"
         disabled={busy || refreshing}
@@ -773,17 +813,17 @@ export function ResetCaseButton({ caseId }: { caseId: string }) {
           refresh();
         }}
       >
-        {busy || refreshing ? "Resetting…" : "Yes, reset"}
+        {busy || refreshing ? copy.busy : copy.yes}
       </button>
       <button className="btn btn-secondary" onClick={() => setArmed(false)}>
-        Cancel
+        {copy.cancel}
       </button>
     </span>
   );
 }
 
 /** Archive (or restore) a case. Nothing is deleted: the case keeps its documents and audit trail. */
-export function ArchiveCaseButton({ caseId, archived }: { caseId: string; archived: boolean }) {
+export function ArchiveCaseButton({ caseId, archived, copy }: { caseId: string; archived: boolean; copy: M["caseHeader"]["archive"] & { cancel: string; requestFailed: string } }) {
   const { refresh, refreshing } = useRefresh();
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -796,7 +836,7 @@ export function ArchiveCaseButton({ caseId, archived }: { caseId: string; archiv
       setArmed(false);
       refresh();
     } catch (e) {
-      setError((e as Error).message);
+      setError(problem(e, copy.requestFailed));
     } finally {
       setBusy(false);
     }
@@ -805,7 +845,7 @@ export function ArchiveCaseButton({ caseId, archived }: { caseId: string; archiv
     return (
       <span className="inline-flex flex-col gap-1">
         <button className="btn btn-secondary" disabled={busy || refreshing} onClick={run}>
-          {busy || refreshing ? "Restoring…" : "Restore case"}
+          {busy || refreshing ? copy.restoring : copy.restore}
         </button>
         {error ? <span className="text-xs text-red-700">{error}</span> : null}
       </span>
@@ -813,17 +853,17 @@ export function ArchiveCaseButton({ caseId, archived }: { caseId: string; archiv
   if (!armed)
     return (
       <button className="btn btn-secondary" onClick={() => setArmed(true)}>
-        Archive case
+        {copy.start}
       </button>
     );
   return (
     <span className="inline-flex flex-wrap items-center gap-2 text-sm">
-      <span className="text-muted">Hide this case from the dashboard and review queue? Its history is kept.</span>
+      <span className="text-muted">{copy.confirm}</span>
       <button className="btn btn-primary" disabled={busy || refreshing} onClick={run}>
-        {busy || refreshing ? "Archiving…" : "Yes, archive"}
+        {busy || refreshing ? copy.busy : copy.yes}
       </button>
       <button className="btn btn-secondary" onClick={() => setArmed(false)}>
-        Cancel
+        {copy.cancel}
       </button>
       {error ? <span className="w-full text-xs text-red-700">{error}</span> : null}
     </span>
@@ -832,17 +872,11 @@ export function ArchiveCaseButton({ caseId, archived }: { caseId: string; archiv
 
 // ---------------------------------------------------------------- seller claims
 
-type ClaimTypeKey = "battery_soh" | "odometer" | "accident_history" | "fast_charging";
-const CLAIM_TYPE_OPTIONS: { value: ClaimTypeKey; label: string }[] = [
-  { value: "battery_soh", label: "Battery health" },
-  { value: "odometer", label: "Mileage" },
-  { value: "accident_history", label: "Accident history" },
-  { value: "fast_charging", label: "Fast-charging history" },
-];
+const CLAIM_TYPES: ClaimType[] = ["battery_soh", "odometer", "accident_history", "fast_charging"];
 
 interface DraftClaim {
   key: number;
-  type: ClaimTypeKey;
+  type: ClaimType;
   number: string;
   unit: "km" | "mi";
   flag: boolean;
@@ -851,7 +885,7 @@ interface DraftClaim {
 }
 
 interface Proposal {
-  type: ClaimTypeKey;
+  type: ClaimType;
   stated: { number?: number; unit?: string; flag?: boolean; text?: string };
   sourceText: string;
 }
@@ -870,11 +904,14 @@ function toDraft(p: Proposal): DraftClaim {
   };
 }
 
-function blankDraft(type: ClaimTypeKey): DraftClaim {
+function blankDraft(type: ClaimType): DraftClaim {
   return { key: ++draftKey, type, number: type === "fast_charging" ? "30" : "", unit: "km", flag: false, text: "", sourceText: "" };
 }
 
-export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defaultListing?: string }) {
+export type ClaimsEditorCopy = M["claims"]["editor"] & { types: M["labels"]["claimType"]; requestFailed: string };
+
+export function ClaimsEditor({ caseId, defaultListing, copy }: { caseId: string; defaultListing?: string; copy: ClaimsEditorCopy }) {
+  const { locale } = useI18n();
   const { refresh, refreshing } = useRefresh();
   const [text, setText] = useState("");
   const [drafts, setDrafts] = useState<DraftClaim[]>([]);
@@ -883,22 +920,22 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
   const [error, setError] = useState<string | null>(null);
 
   const patch = (key: number, p: Partial<DraftClaim>) => setDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, ...p } : d)));
-  const unused = CLAIM_TYPE_OPTIONS.find((o) => !drafts.some((d) => d.type === o.value))?.value;
+  const unused = CLAIM_TYPES.find((t) => !drafts.some((d) => d.type === t));
 
   async function findClaims() {
     setBusy("parse");
     setError(null);
     setNote(null);
     try {
-      const r = (await post(`/api/cases/${caseId}/claims/parse`, { text })) as { proposals: Proposal[]; mode: string; model: string | null; note?: string; dropped: string[] };
+      const r = (await post(`/api/cases/${caseId}/claims/parse`, { text })) as { proposals: Proposal[]; mode: string; model: string | null; note?: string; noteCode?: "demo" | "fallback"; dropped: string[] };
       setDrafts(r.proposals.map(toDraft));
       const n = r.proposals.length;
       setNote({
-        text: n ? `${n} claim${n === 1 ? "" : "s"} found. Check ${n === 1 ? "it" : "them"} before saving.` : "No claims found in this text. You can add one by hand.",
-        technical: r.mode === "vertex-gemini" ? `Read by ${r.model} (Gemini on Vertex AI).` : r.note,
+        text: n ? formatPlural(locale, copy.found, n) : copy.none,
+        technical: r.mode === "vertex-gemini" ? format(copy.readBy, { model: r.model ?? "" }) : r.noteCode === "demo" ? copy.rulesDemo : r.noteCode === "fallback" ? copy.rulesFallback : r.note,
       });
     } catch (e) {
-      setError((e as Error).message);
+      setError(problem(e, copy.requestFailed));
     } finally {
       setBusy(null);
     }
@@ -926,10 +963,10 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
       const n = drafts.length;
       setDrafts([]);
       setText("");
-      setNote({ text: `${n} claim${n === 1 ? "" : "s"} saved and checked. ${n === 1 ? "Its status is" : "Their statuses are"} shown above.` });
+      setNote({ text: formatPlural(locale, copy.saved, n) });
       refresh();
     } catch (e) {
-      setError((e as Error).message);
+      setError(problem(e, copy.requestFailed));
     } finally {
       setBusy(null);
     }
@@ -938,27 +975,21 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
   return (
     <div className="grid gap-3">
       <label className="grid gap-1 text-sm">
-        <span className="font-medium">Paste the seller's listing or message</span>
-        <textarea
-          className="input min-h-24"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          maxLength={4000}
-          placeholder="e.g. 2021 ID.3 Pro, battery health 92%, 48,200 km, no accidents, mostly home charged."
-        />
+        <span className="font-medium">{copy.paste}</span>
+        <textarea className="input min-h-24" value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} placeholder={copy.placeholder} />
       </label>
       <div className="flex flex-wrap gap-2">
         <button className="btn btn-primary" disabled={!!busy || text.trim().length < 5} onClick={findClaims}>
-          {busy === "parse" ? "Reading…" : "Find claims"}
+          {busy === "parse" ? copy.reading : copy.find}
         </button>
         {defaultListing && !text && (
           <button className="btn btn-secondary" onClick={() => setText(defaultListing)}>
-            Use sample listing
+            {copy.sample}
           </button>
         )}
         {unused && (
           <button className="btn btn-secondary" disabled={!!busy} onClick={() => setDrafts((ds) => [...ds, blankDraft(unused)])}>
-            Add a claim by hand
+            {copy.byHand}
           </button>
         )}
       </div>
@@ -973,51 +1004,48 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
           {drafts.map((d) => (
             <li key={d.key} className="grid gap-2 rounded-lg border border-line bg-canvas p-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
-                <select className="input input-inline" value={d.type} onChange={(e) => patch(d.key, { type: e.target.value as ClaimTypeKey })} aria-label="Claim type">
-                  {CLAIM_TYPE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value} disabled={o.value !== d.type && drafts.some((x) => x.type === o.value)}>
-                      {o.label}
+                <select className="input input-inline" value={d.type} onChange={(e) => patch(d.key, { type: e.target.value as ClaimType })} aria-label={copy.type}>
+                  {CLAIM_TYPES.map((t) => (
+                    <option key={t} value={t} disabled={t !== d.type && drafts.some((x) => x.type === t)}>
+                      {copy.types[t]}
                     </option>
                   ))}
                 </select>
                 {d.type === "battery_soh" && (
                   <label className="flex items-center gap-1">
-                    <input className="input input-inline" style={{ width: 80 }} inputMode="decimal" value={d.number} onChange={(e) => patch(d.key, { number: e.target.value })} aria-label="Battery health percent" />%
+                    <input className="input input-inline" style={{ width: 80 }} inputMode="decimal" value={d.number} onChange={(e) => patch(d.key, { number: e.target.value })} aria-label={copy.soh} />%
                   </label>
                 )}
                 {d.type === "odometer" && (
                   <>
-                    <input className="input input-inline" style={{ width: 120 }} inputMode="numeric" value={d.number} onChange={(e) => patch(d.key, { number: e.target.value })} aria-label="Mileage" />
-                    <select className="input input-inline" value={d.unit} onChange={(e) => patch(d.key, { unit: e.target.value as "km" | "mi" })} aria-label="Unit">
+                    <input className="input input-inline" style={{ width: 120 }} inputMode="numeric" value={d.number} onChange={(e) => patch(d.key, { number: e.target.value })} aria-label={copy.mileage} />
+                    <select className="input input-inline" value={d.unit} onChange={(e) => patch(d.key, { unit: e.target.value as "km" | "mi" })} aria-label={copy.unit}>
                       <option value="km">km</option>
                       <option value="mi">mi</option>
                     </select>
                   </>
                 )}
                 {d.type === "accident_history" && (
-                  <select className="input input-inline" value={d.flag ? "yes" : "no"} onChange={(e) => patch(d.key, { flag: e.target.value === "yes" })} aria-label="Accident claim">
-                    <option value="no">Seller says no accidents</option>
-                    <option value="yes">Seller reports accident damage</option>
+                  <select className="input input-inline" value={d.flag ? "yes" : "no"} onChange={(e) => patch(d.key, { flag: e.target.value === "yes" })} aria-label={copy.accident}>
+                    <option value="no">{copy.noAccidents}</option>
+                    <option value="yes">{copy.damage}</option>
                   </select>
                 )}
                 {d.type === "fast_charging" && (
                   <>
-                    <input className="input input-inline" style={{ width: 200 }} value={d.text} onChange={(e) => patch(d.key, { text: e.target.value })} placeholder="Seller's words" aria-label="Seller's words" />
+                    <input className="input input-inline" style={{ width: 200 }} value={d.text} onChange={(e) => patch(d.key, { text: e.target.value })} placeholder={copy.words} aria-label={copy.words} />
                     <label className="flex items-center gap-1 text-xs text-muted">
-                      at most
-                      <input className="input input-inline" style={{ width: 64 }} inputMode="numeric" value={d.number} onChange={(e) => patch(d.key, { number: e.target.value })} aria-label="Highest DC share" />% DC
+                      {copy.atMost}
+                      <input className="input input-inline" style={{ width: 64 }} inputMode="numeric" value={d.number} onChange={(e) => patch(d.key, { number: e.target.value })} aria-label={copy.dcShare} />
+                      {copy.dc}
                     </label>
                   </>
                 )}
                 <button className="ml-auto text-xs text-muted hover:text-red-700" onClick={() => setDrafts((ds) => ds.filter((x) => x.key !== d.key))}>
-                  Remove
+                  {copy.remove}
                 </button>
               </div>
-              {d.sourceText && (
-                <p className="text-xs text-muted">
-                  From the listing: <q className="italic">{d.sourceText}</q>
-                </p>
-              )}
+              {d.sourceText && <p className="text-xs text-muted">{rich(copy.fromListing, { quote: <q className="italic">{d.sourceText}</q> })}</p>}
             </li>
           ))}
         </ul>
@@ -1025,7 +1053,7 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
       <ErrorNote error={error} />
       {drafts.length > 0 && (
         <button className="btn btn-primary justify-self-start" disabled={!!busy || refreshing} onClick={save}>
-          {busy === "save" || refreshing ? "Checking…" : `Save and check ${drafts.length} claim${drafts.length === 1 ? "" : "s"}`}
+          {busy === "save" || refreshing ? copy.checking : formatPlural(locale, copy.save, drafts.length)}
         </button>
       )}
     </div>
@@ -1033,21 +1061,22 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
 }
 
 /** Withdraws a claim after a confirm step. The claim stays in the history; it is just no longer checked. */
-export function WithdrawClaimButton({ caseId, claimId, label }: { caseId: string; claimId: string; label: string }) {
+export function WithdrawClaimButton({ caseId, claimId, label, copy }: { caseId: string; claimId: string; label: string; copy: M["claims"]["withdraw"] & { cancel: string; requestFailed: string } }) {
   const { refresh, refreshing } = useRefresh();
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const working = busy || refreshing;
+  const name = format(copy.label, { claim: label });
   if (!armed)
     return (
-      <button type="button" className="no-print btn btn-secondary px-3 py-1 text-xs" onClick={() => setArmed(true)} aria-label={`Withdraw claim: ${label}`}>
-        Withdraw
+      <button type="button" className="no-print btn btn-secondary px-3 py-1 text-xs" onClick={() => setArmed(true)} aria-label={name}>
+        {copy.start}
       </button>
     );
   return (
-    <div role="group" aria-label={`Withdraw claim: ${label}`} className="no-print flex w-full flex-wrap items-center justify-end gap-2 rounded-lg bg-canvas px-3 py-2 text-sm sm:w-auto">
-      <span className="text-muted">Stop checking this claim? It stays in the history.</span>
+    <div role="group" aria-label={name} className="no-print flex w-full flex-wrap items-center justify-end gap-2 rounded-lg bg-canvas px-3 py-2 text-sm sm:w-auto">
+      <span className="text-muted">{copy.confirm}</span>
       <button
         type="button"
         className="btn btn-primary px-3 py-1 text-xs"
@@ -1057,27 +1086,31 @@ export function WithdrawClaimButton({ caseId, claimId, label }: { caseId: string
           setError(null);
           try {
             const res = await fetch(`/api/cases/${caseId}/claims/${claimId}`, { method: "DELETE" });
-            if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `Request failed (${res.status})`);
+            if (!res.ok) throw new ApiError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "", res.status, {});
             refresh();
           } catch (e) {
-            setError((e as Error).message);
+            setError(problem(e, copy.requestFailed));
           } finally {
             setBusy(false);
           }
         }}
       >
-        {working ? "Withdrawing…" : "Yes, withdraw"}
+        {working ? copy.busy : copy.yes}
       </button>
       <button type="button" className="btn btn-secondary px-3 py-1 text-xs" disabled={working} onClick={() => setArmed(false)}>
-        Cancel
+        {copy.cancel}
       </button>
-      {error ? <span role="alert" className="w-full text-xs text-red-700">{error}</span> : null}
+      {error ? (
+        <span role="alert" className="w-full text-xs text-red-700">
+          {error}
+        </span>
+      ) : null}
     </div>
   );
 }
 
 /** The reviewer's own label for a case (stock number, seller name), so similar cases can be told apart. */
-export function ReferenceEditor({ caseId, value }: { caseId: string; value: string | null }) {
+export function ReferenceEditor({ caseId, value, copy }: { caseId: string; value: string | null; copy: M["reference"] & { save: string; saving: string; cancel: string; requestFailed: string } }) {
   const { refresh, refreshing } = useRefresh();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(value ?? "");
@@ -1086,9 +1119,9 @@ export function ReferenceEditor({ caseId, value }: { caseId: string; value: stri
   if (!editing)
     return (
       <span className="inline-flex flex-wrap items-center gap-2">
-        {value ? <span>{value}</span> : <span className="text-muted">None</span>}
+        {value ? <span>{value}</span> : <span className="text-muted">{copy.none}</span>}
         <button type="button" className="text-sm font-medium text-brand-600 hover:underline" onClick={() => (setText(value ?? ""), setEditing(true))}>
-          {value ? "Edit" : "Add"}
+          {value ? copy.edit : copy.add}
         </button>
       </span>
     );
@@ -1104,29 +1137,33 @@ export function ReferenceEditor({ caseId, value }: { caseId: string; value: stri
           setEditing(false);
           refresh();
         } catch (err) {
-          setError((err as Error).message);
+          setError(problem(err, copy.requestFailed));
         } finally {
           setBusy(false);
         }
       }}
     >
-      <input className="input" value={text} onChange={(e) => setText(e.target.value)} maxLength={80} placeholder="e.g. Stock A-1042, or the seller's name" aria-label="Your reference for this case" autoFocus />
+      <input className="input" value={text} onChange={(e) => setText(e.target.value)} maxLength={80} placeholder={copy.placeholder} aria-label={copy.label} autoFocus />
       <div className="flex gap-2">
         <button className="btn btn-primary px-3 py-1 text-xs" disabled={busy || refreshing}>
-          {busy || refreshing ? "Saving…" : "Save"}
+          {busy || refreshing ? copy.saving : copy.save}
         </button>
         <button type="button" className="btn btn-secondary px-3 py-1 text-xs" onClick={() => setEditing(false)}>
-          Cancel
+          {copy.cancel}
         </button>
       </div>
-      {error ? <span role="alert" className="text-xs text-red-700">{error}</span> : null}
+      {error ? (
+        <span role="alert" className="text-xs text-red-700">
+          {error}
+        </span>
+      ) : null}
     </form>
   );
 }
 
 // ---------------------------------------------------------------- registry and issuer checks
 
-export function VinDecodeButton({ caseId, provider = "nhtsa_vpic", label = "Look up the VIN (US database)" }: { caseId: string; provider?: "nhtsa_vpic" | "nzta_mvr"; label?: string }) {
+export function VinDecodeButton({ caseId, provider = "nhtsa_vpic", label, copy }: { caseId: string; provider?: "nhtsa_vpic" | "nzta_mvr"; label: string; copy: { checking: string; requestFailed: string } }) {
   const { refresh, refreshing } = useRefresh();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1142,31 +1179,34 @@ export function VinDecodeButton({ caseId, provider = "nhtsa_vpic", label = "Look
             await post(`/api/cases/${caseId}/registry`, { provider });
             refresh();
           } catch (e) {
-            setError((e as Error).message);
+            setError(problem(e, copy.requestFailed));
           } finally {
             setBusy(false);
           }
         }}
       >
-        {busy || refreshing ? "Checking…" : label}
+        {busy || refreshing ? copy.checking : label}
       </button>
       {error ? <span className="text-xs text-red-700">{error}</span> : null}
     </span>
   );
 }
 
-const METHOD_OPTIONS = [
-  { value: "issuer_phone", label: "Phoned the issuer" },
-  { value: "issuer_email", label: "Emailed the issuer" },
-  { value: "issuer_portal", label: "Issuer's own portal" },
-  { value: "registry_lookup", label: "Vehicle registry lookup" },
-  { value: "government_document_number", label: "Government document-number check" },
-];
+const METHODS: VerificationMethod[] = ["issuer_phone", "issuer_email", "issuer_portal", "registry_lookup", "government_document_number"];
+const OUTCOMES = ["confirmed", "denied", "no_response"] as const;
 
-export function VerificationForm({ caseId, docId }: { caseId: string; docId: string }) {
+export function VerificationForm({
+  caseId,
+  docId,
+  copy,
+}: {
+  caseId: string;
+  docId: string;
+  copy: M["document"]["verify"] & { methods: M["labels"]["verificationMethod"]; saving: string; requestFailed: string };
+}) {
   const { refresh, refreshing } = useRefresh();
-  const [method, setMethod] = useState("issuer_phone");
-  const [outcome, setOutcome] = useState("confirmed");
+  const [method, setMethod] = useState<VerificationMethod>("issuer_phone");
+  const [outcome, setOutcome] = useState<(typeof OUTCOMES)[number]>("confirmed");
   const [contact, setContact] = useState("");
   const [reference, setReference] = useState("");
   const [note, setNote] = useState("");
@@ -1186,30 +1226,32 @@ export function VerificationForm({ caseId, docId }: { caseId: string; docId: str
           setNote("");
           refresh();
         } catch (err) {
-          setError((err as Error).message);
+          setError(problem(err, copy.requestFailed));
         } finally {
           setBusy(false);
         }
       }}
     >
-      <select className="input" value={method} onChange={(e) => setMethod(e.target.value)} aria-label="How it was checked">
-        {METHOD_OPTIONS.map((m) => (
-          <option key={m.value} value={m.value}>
-            {m.label}
+      <select className="input" value={method} onChange={(e) => setMethod(e.target.value as VerificationMethod)} aria-label={copy.how}>
+        {METHODS.map((m) => (
+          <option key={m} value={m}>
+            {copy.methods[m]}
           </option>
         ))}
       </select>
-      <select className="input" value={outcome} onChange={(e) => setOutcome(e.target.value)} aria-label="What they said">
-        <option value="confirmed">They confirmed they issued it, with these values</option>
-        <option value="denied">They said they did not issue it</option>
-        <option value="no_response">No response</option>
+      <select className="input" value={outcome} onChange={(e) => setOutcome(e.target.value as (typeof OUTCOMES)[number])} aria-label={copy.said}>
+        {OUTCOMES.map((o) => (
+          <option key={o} value={o}>
+            {copy.outcomes[o]}
+          </option>
+        ))}
       </select>
-      <input className="input" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Who: e.g. Lakeside EV Centre, service desk" required />
-      <input className="input" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Reference they gave (optional)" />
-      <textarea className="input min-h-16" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What they confirmed, e.g. invoice LS-26-08114, odometer 47,950 km" />
+      <input className="input" value={contact} onChange={(e) => setContact(e.target.value)} placeholder={copy.contactPlaceholder} aria-label={copy.contact} required />
+      <input className="input" value={reference} onChange={(e) => setReference(e.target.value)} placeholder={copy.reference} aria-label={copy.reference} />
+      <textarea className="input min-h-16" value={note} onChange={(e) => setNote(e.target.value)} placeholder={copy.notePlaceholder} aria-label={copy.note} />
       <ErrorNote error={error} />
       <button className="btn btn-primary justify-self-start" disabled={busy || refreshing}>
-        {busy || refreshing ? "Saving…" : "Record verification"}
+        {busy || refreshing ? copy.saving : copy.submit}
       </button>
     </form>
   );
@@ -1217,7 +1259,7 @@ export function VerificationForm({ caseId, docId }: { caseId: string; docId: str
 
 // ---------------------------------------------------------------- evidence agent
 
-export function RunAgentButton({ caseId, disabled }: { caseId: string; disabled?: boolean }) {
+export function RunAgentButton({ caseId, disabled, copy }: { caseId: string; disabled?: boolean; copy: M["agentCard"]["run"] & { seconds: string; requestFailed: string } }) {
   const { refresh, refreshing } = useRefresh();
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1235,7 +1277,7 @@ export function RunAgentButton({ caseId, disabled }: { caseId: string; disabled?
             // The agent has stored its run by now: show it (and any new statuses) without a manual reload.
             refresh();
           } catch (e) {
-            setError((e as Error).message);
+            setError(problem(e, copy.requestFailed));
           } finally {
             setStartedAt(null);
           }
@@ -1243,13 +1285,13 @@ export function RunAgentButton({ caseId, disabled }: { caseId: string; disabled?
       >
         {busy ? (
           <>
-            Investigating…
-            <Elapsed since={startedAt} /> (up to a minute)
+            {copy.busy}
+            <Elapsed since={startedAt} template={copy.seconds} /> {copy.upTo}
           </>
         ) : refreshing ? (
-          "Loading the results…"
+          copy.loading
         ) : (
-          "Run evidence agent"
+          copy.start
         )}
       </button>
       <ErrorNote error={error} />
@@ -1257,7 +1299,7 @@ export function RunAgentButton({ caseId, disabled }: { caseId: string; disabled?
   );
 }
 
-export function CopyButton({ text }: { text: string }) {
+export function CopyButton({ text, labels }: { text: string; labels: { copy: string; copied: string } }) {
   const [done, setDone] = useState(false);
   return (
     <button
@@ -1268,7 +1310,7 @@ export function CopyButton({ text }: { text: string }) {
         setTimeout(() => setDone(false), 1500);
       }}
     >
-      {done ? "Copied" : "Copy"}
+      {done ? labels.copied : labels.copy}
     </button>
   );
 }

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
+import { I18nProvider } from "@/i18n/client";
 import { getI18n } from "@/i18n/server";
 import { TECHNICAL_COOKIE } from "@/lib/preferences";
 import "./globals.css";
@@ -26,12 +27,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // (src/middleware.ts) to its scripts. Without this, the built-in 404 page is prerendered
   // at build time without a nonce, and the browser blocks its scripts.
   await connection();
-  const { locale } = await getI18n();
+  const { locale, m } = await getI18n();
   // Read here so the first paint already hides or shows technical details (see globals.css).
   const technical = (await cookies()).get(TECHNICAL_COOKIE)?.value === "on";
   return (
     <html lang={locale} className={`${sans.variable} ${mono.variable}`} data-technical={technical ? "on" : "off"}>
-      <body className="min-h-screen">{children}</body>
+      <body className="min-h-screen">
+        <I18nProvider locale={locale} errorPage={m.errorPage}>
+          {children}
+        </I18nProvider>
+      </body>
     </html>
   );
 }

@@ -1,7 +1,11 @@
-// English: the source language. id.ts and ko.ts must have exactly this shape
+// English: the source language. The id/ and ko/ folders must have exactly this shape
 // (a missing or extra key is a type error). "{name}" marks a value filled in at run time;
 // plural(...) messages pick their form by count (see src/i18n/format.ts).
-import { plural } from "../format";
+import { plural } from "../../format";
+import * as caseMessages from "./case";
+import * as common from "./common";
+import * as evidence from "./evidence";
+import * as pages from "./pages";
 
 export const en = {
   meta: {
@@ -322,6 +326,10 @@ export const en = {
     legend: "What the statuses mean",
     disclaimer: "VoltProof is an evidence-review tool. It does not value vehicles, test batteries, certify documents or detect fraud automatically. Findings marked {conflict} need a person to review them.",
   },
+  ...common,
+  ...caseMessages,
+  ...evidence,
+  ...pages,
 };
 
 export type Messages = typeof en;

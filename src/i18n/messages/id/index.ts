@@ -1,6 +1,10 @@
 // Bahasa Indonesia. Same shape as en.ts (enforced by the Messages type).
-import { plural } from "../format";
-import type { Messages } from "./en";
+import { plural } from "../../format";
+import type { Messages } from "../en";
+import * as caseMessages from "./case";
+import * as common from "./common";
+import * as evidence from "./evidence";
+import * as pages from "./pages";
 
 export const id: Messages = {
   meta: {
@@ -321,4 +325,8 @@ export const id: Messages = {
     legend: "Arti status",
     disclaimer: "VoltProof adalah alat peninjau bukti. VoltProof tidak menaksir harga kendaraan, menguji baterai, menyertifikasi dokumen, atau mendeteksi penipuan secara otomatis. Temuan berstatus {conflict} perlu ditinjau oleh manusia.",
   },
+  ...common,
+  ...caseMessages,
+  ...evidence,
+  ...pages,
 };

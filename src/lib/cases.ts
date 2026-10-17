@@ -8,32 +8,43 @@ import { groundExtraction } from "./extraction/grounding";
 import { analyzeDocument, type ForensicArtifacts } from "./forensics";
 import { crossCheck } from "./ocr/crosscheck";
 import { ocrConfigured, runInkMarkCheck, runOcr, type OcrResult } from "./ocr/paddle";
+import { errorText, type ErrorCode, type ErrorValues } from "../i18n/errors";
+import { en as EN_RULES, type RuleText } from "../i18n/rules/en";
 import { ASSESSOR_VERSION, assessClaims, type ClaimPolicy } from "./claims/assess";
 import { validateStated, CLAIM_TYPES, type ClaimProposal } from "./claims/parse";
-import { CLAIM_TYPE_LABEL, PROVENANCE_LABEL, RESOLUTION_LABEL, STATUS_LABEL, fieldLabelInline, joinList } from "./labels";
+import { eventText, statusParams, triggerText, type EventParams, type Trigger } from "./history";
+import { fieldLabelInline, joinList } from "./labels";
 import { decodeVin, VPIC_NAME } from "./registry/nhtsa";
 import { lookupVin11, NZTA_NAME } from "./registry/nzta";
 import { ALLOWED_TYPES, checkIntegrity, detectType } from "./integrity";
-import { normalizeVin, vinFormatProblem } from "./normalize";
+import { normalizeVin, vinFormatIssue } from "./normalize";
 import { RULES_VERSION, runRules } from "./rules";
 import { SAMPLE_CASES, type SampleCase } from "./samples/definitions";
 import { getStore } from "./storage";
 import { currentFindings, evidenceKey } from "./derive";
-import type { AuditEvent, Case, CaseDocument, Claim, ClaimSource, DocumentForensics, Extraction, ExtractionFields, Provenance, RegistryCheck, Resolution, Vehicle } from "./types";
+import type { AuditEvent, Case, CaseDocument, Claim, ClaimSource, DocumentForensics, Extraction, ExtractionFields, Finding, Provenance, RegistryCheck, Resolution, Vehicle } from "./types";
 
 const MAX_RULE_RUNS = 25;
 // A case is one Firestore document (1 MiB limit), so history is capped.
 const MAX_EXTRACTION_HISTORY = 5;
 const PROVENANCES: Provenance[] = ["seller_provided", "dealer_captured", "dealer_ordered", "unknown"];
 
-/** An error caused by the request, shown to the user as is. */
+/**
+ * An error caused by the request. It carries a code and values; the API answers with the
+ * message in the requester's language (src/lib/api.ts). `message` is the English text, for logs.
+ */
 export class UserError extends Error {
+  readonly status: number;
+  readonly details?: Record<string, unknown>;
+  readonly values: ErrorValues;
   constructor(
-    message: string,
-    readonly status = 400,
-    readonly details?: Record<string, unknown>,
+    readonly code: ErrorCode,
+    opts: { status?: number; details?: Record<string, unknown>; values?: ErrorValues } = {},
   ) {
-    super(message);
+    super(errorText(code, "en", opts.values));
+    this.status = opts.status ?? 400;
+    this.details = opts.details;
+    this.values = opts.values ?? {};
   }
 }
 
@@ -42,24 +53,16 @@ function now() {
 }
 
 /** An audit event: `detail` in plain words; model names, versions and hashes go in `technical`. */
-function event(actor: string, type: string, detail: string, extra: { at?: string; technical?: string } = {}): AuditEvent {
-  return { at: extra.at ?? now(), actor, type, detail, ...(extra.technical ? { technical: extra.technical } : {}) };
+function event(actor: string, type: string, detail: string, extra: { at?: string; technical?: string; params?: EventParams } = {}): AuditEvent {
+  return { at: extra.at ?? now(), actor, type, detail, ...(extra.technical ? { technical: extra.technical } : {}), ...(extra.params ? { params: extra.params } : {}) };
 }
 
-const STATUS_COUNT_WORD: Record<string, [string, string]> = {
-  conflict: ["conflict", "conflicts"],
-  unknown: ["unknown", "unknown"],
-  consistent: ["consistent", "consistent"],
-  verified: ["verified", "verified"],
-};
-
-/** "2 conflicts, 1 unknown, 6 consistent", most urgent first. */
-function statusCounts(findings: { status: string }[]) {
-  return Object.keys(STATUS_COUNT_WORD)
-    .map((k) => [k, findings.filter((f) => f.status === k).length] as const)
-    .filter(([, n]) => n > 0)
-    .map(([k, n]) => `${n} ${STATUS_COUNT_WORD[k][n === 1 ? 0 : 1]}`)
-    .join(", ");
+/**
+ * An audit event stored with its values, so the history can be shown in any language.
+ * `detail` is the same event worded in English, the language of the record.
+ */
+function logged(actor: string, type: string, params: EventParams, extra: { at?: string; technical?: string } = {}): AuditEvent {
+  return event(actor, type, eventText(type, params, "en")!, { ...extra, params });
 }
 
 function safeName(name: string) {
@@ -86,20 +89,29 @@ export function claimPolicy(): ClaimPolicy {
   };
 }
 
-export function evaluateRules(c: Case, trigger: string, actor: string) {
+/**
+ * Every finding for the case as it stands: the rules, then the seller's claims assessed from
+ * the same run. Worded by `t`: English for the stored record; pages pass another language
+ * to show the same findings to the reader (src/lib/localize.ts).
+ */
+export function computeFindings(c: Case, t: RuleText = EN_RULES): Finding[] {
   const cfg = getConfig();
   const input = { vehicle: c.vehicle, documents: c.documents, referenceDate: c.createdAt, registryChecks: c.registryChecks };
-  const ruleFindings = runRules(input, { batteryReportMaxAgeDays: cfg.batteryReportMaxAgeDays });
+  const ruleFindings = runRules(input, { batteryReportMaxAgeDays: cfg.batteryReportMaxAgeDays }, t);
   // Claims are assessed from the same run, so their statuses are versioned with the findings.
-  const claimFindings = assessClaims(c.claims, input, ruleFindings, claimPolicy());
+  const claimFindings = assessClaims(c.claims, input, ruleFindings, claimPolicy(), t);
   // When a claim covers a topic, its own Unknown says what is missing; the matching
   // rule-level Unknown would only repeat it in Decision impact. Conflicts stay in both.
   const covered = new Set(claimFindings.flatMap((f) => CLAIM_COVERS[f.claim!.type]));
   for (const f of ruleFindings) if (f.status === "unknown" && covered.has(f.id)) f.decisionImpact = false;
-  const findings = [...claimFindings, ...ruleFindings];
-  c.ruleRuns.push({ id: randomUUID(), at: now(), rulesVersion: RULES_VERSION, assessorVersion: ASSESSOR_VERSION, trigger, findings });
+  return [...claimFindings, ...ruleFindings];
+}
+
+export function evaluateRules(c: Case, trigger: Trigger, actor: string) {
+  const findings = computeFindings(c);
+  c.ruleRuns.push({ id: randomUUID(), at: now(), rulesVersion: RULES_VERSION, assessorVersion: ASSESSOR_VERSION, trigger: triggerText(trigger, "en")!, findings });
   if (c.ruleRuns.length > MAX_RULE_RUNS) c.ruleRuns = c.ruleRuns.slice(-MAX_RULE_RUNS);
-  c.events.push(event(actor, "rules_run", `Checks updated (${trigger}): ${statusCounts(findings) || "no findings"}.`, { technical: `Rules ${RULES_VERSION}, claim assessor ${ASSESSOR_VERSION}` }));
+  c.events.push(logged(actor, "rules_run", { ...trigger, ...statusParams(findings) }, { technical: `Rules ${RULES_VERSION}, claim assessor ${ASSESSOR_VERSION}` }));
 }
 
 // ---------------------------------------------------------------- synthetic cases
@@ -126,7 +138,7 @@ async function buildSampleCase(sc: SampleCase): Promise<Case> {
     })),
     ruleRuns: [],
     reviews: [],
-    events: [event("VoltProof demo seed", "case_created", "Demo case created. All documents and data are fictional.", { at: sc.createdAt })],
+    events: [logged("VoltProof demo seed", "case_created", { demo: 1 }, { at: sc.createdAt })],
   };
   for (const sd of sc.docs) {
     const buf = await readSampleFile(sd);
@@ -157,9 +169,9 @@ async function buildSampleCase(sc: SampleCase): Promise<Case> {
       extractionHistory: [],
       forensics,
     });
-    c.events.push(event("VoltProof demo seed", "document_added", `${sd.filename} added (sample document; its values come with the demo, not from AI).`, { at: sc.createdAt, technical: "Extraction loaded from a hand-written demo fixture." }));
+    c.events.push(logged("VoltProof demo seed", "document_added", { file: sd.filename, sample: 1 }, { at: sc.createdAt, technical: "Extraction loaded from a hand-written demo fixture." }));
   }
-  evaluateRules(c, "demo seed", "system");
+  evaluateRules(c, { trigger: "demoSeed" }, "system");
   return c;
 }
 
@@ -185,9 +197,9 @@ export async function ensureSeeded() {
 
 export async function resetSampleCase(id: string, actor: string) {
   const sc = SAMPLE_CASES.find((s) => s.id === id);
-  if (!sc) throw new UserError("Only synthetic demonstration cases can be reset.");
+  if (!sc) throw new UserError("resetOnlyDemo");
   const c = await buildSampleCase(sc);
-  c.events.push(event(actor, "case_reset", "Demo case reset to its original state."));
+  c.events.push(logged(actor, "case_reset", {}));
   await getStore().putCase(c);
   return c;
 }
@@ -229,7 +241,7 @@ const MAX_REFERENCE = 80;
 
 function cleanReference(value: unknown) {
   const r = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
-  if (r.length > MAX_REFERENCE) throw new UserError(`The reference is too long (${MAX_REFERENCE} characters max).`);
+  if (r.length > MAX_REFERENCE) throw new UserError("referenceTooLong", { values: { max: MAX_REFERENCE } });
   return r || null;
 }
 
@@ -239,17 +251,17 @@ export async function createCase(input: { make: string; model: string; year: str
   const reference = cleanReference(input.reference);
   const vin = normalizeVin(input.vin ?? "");
   const year = input.year ? Number(input.year) : null;
-  if (!make || !model) throw new UserError("Make and model are required.");
-  if (make.length > 60 || model.length > 60) throw new UserError("Make or model is too long.");
-  const vinProblem = vinFormatProblem(vin);
-  if (vinProblem) throw new UserError(vinProblem);
-  if (year !== null && (!Number.isInteger(year) || year < 2008 || year > new Date().getFullYear() + 1)) throw new UserError("Enter a valid model year.");
+  if (!make || !model) throw new UserError("makeModelRequired");
+  if (make.length > 60 || model.length > 60) throw new UserError("makeModelTooLong");
+  const vinIssue = vinFormatIssue(vin);
+  if (vinIssue) throw new UserError(vinIssue.code, { values: vinIssue.count === undefined ? {} : { count: vinIssue.count } });
+  if (year !== null && (!Number.isInteger(year) || year < 2008 || year > new Date().getFullYear() + 1)) throw new UserError("yearInvalid");
 
   await ensureSeeded();
   if (vin && !input.allowDuplicateVin) {
     const matches = await findCasesByVin(vin);
     if (matches.length) {
-      throw new UserError(`${matches.length === 1 ? "A case already exists" : `${matches.length} cases already exist`} for this VIN. Open ${matches.length === 1 ? "it" : "one of them"}, or confirm that you want a new case.`, 409, { duplicates: matches });
+      throw new UserError("duplicateVin", { status: 409, details: { duplicates: matches }, values: { count: matches.length } });
     }
   }
   const created = now();
@@ -266,26 +278,26 @@ export async function createCase(input: { make: string; model: string; year: str
     claims: [],
     ruleRuns: [],
     reviews: [],
-    events: [event(actor, "case_created", `Case created for ${year ?? ""} ${make} ${model}${vin ? `, VIN ${vin}` : ""}${reference ? ` (${reference})` : ""}.`.replace("  ", " "))],
+    events: [logged(actor, "case_created", { vehicle: [year, make, model].filter(Boolean).join(" "), ...(vin ? { vin } : {}), ...(reference ? { reference } : {}) })],
   };
-  evaluateRules(c, "case created", "system");
+  evaluateRules(c, { trigger: "caseCreated" }, "system");
   await getStore().putCase(c);
   return c;
 }
 
 export async function addDocument(caseId: string, file: { name: string; data: Buffer }, provenance: string, actor: string) {
   const cfg = getConfig();
-  if (!file.data.length) throw new UserError(`${file.name} is empty.`);
-  if (file.data.length > cfg.maxUploadBytes) throw new UserError(`${file.name} is larger than ${Math.round(cfg.maxUploadBytes / 1048576)} MB.`);
+  if (!file.data.length) throw new UserError("fileEmpty", { values: { file: file.name } });
+  if (file.data.length > cfg.maxUploadBytes) throw new UserError("fileTooLarge", { values: { file: file.name, mb: Math.round(cfg.maxUploadBytes / 1048576) } });
   const type = detectType(file.data);
-  if (!type) throw new UserError(`${file.name} is not a PDF, JPG or PNG file.`);
+  if (!type) throw new UserError("fileType", { values: { file: file.name } });
   const prov = (PROVENANCES as string[]).includes(provenance) ? (provenance as Provenance) : "unknown";
 
   const id = randomUUID();
   const key = `cases/${caseId}/${id}-${safeName(file.name)}`;
   const integrity = checkIntegrity(file.data, file.name);
   const existing = await getCase(caseId);
-  if (!existing) throw new UserError("Case not found.");
+  if (!existing) throw new UserError("caseNotFound");
   await getStore().putFile(key, file.data, ALLOWED_TYPES[type].mime);
   const doc: CaseDocument = {
     id,
@@ -307,7 +319,7 @@ export async function addDocument(caseId: string, file: { name: string; data: Bu
     const dup = c.documents.find((d) => d.integrity.sha256 === integrity.sha256);
     c.documents.push(doc);
     c.events.push(
-      event(actor, "document_added", `${doc.filename} uploaded (${PROVENANCE_LABEL[prov].toLowerCase()}).${dup ? ` It is identical to ${dup.filename}, already on file.` : ""}`, {
+      logged(actor, "document_added", { file: doc.filename, source: prov, ...(dup ? { duplicateOf: dup.filename } : {}) }, {
         technical: `SHA-256 ${integrity.sha256.slice(0, 12)}…`,
       }),
     );
@@ -321,18 +333,18 @@ export async function addDocument(caseId: string, file: { name: string; data: Bu
  * and the rules re-run.
  */
 export async function setDocumentProvenance(caseId: string, docId: string, provenance: string, actor: string) {
-  if (!(PROVENANCES as string[]).includes(provenance)) throw new UserError("Choose where the document came from.");
+  if (!(PROVENANCES as string[]).includes(provenance)) throw new UserError("chooseSource");
   const prov = provenance as Provenance;
   await ensureSeeded();
-  if (!(await getStore().getCase(caseId))) throw new UserError("Case not found.", 404);
+  if (!(await getStore().getCase(caseId))) throw new UserError("caseNotFound", { status: 404 });
   return getStore().updateCase(caseId, (c) => {
     const d = c.documents.find((x) => x.id === docId);
-    if (!d) throw new UserError("Document not found.", 404);
+    if (!d) throw new UserError("documentNotFound", { status: 404 });
     if (d.provenance === prov) return;
     const was = d.provenance;
     d.provenance = prov;
-    c.events.push(event(actor, "document_source_changed", `${d.filename}: source changed from “${PROVENANCE_LABEL[was]}” to “${PROVENANCE_LABEL[prov]}”.`));
-    evaluateRules(c, `document source changed: ${d.filename}`, "system");
+    c.events.push(logged(actor, "document_source_changed", { file: d.filename, from: was, to: prov }));
+    evaluateRules(c, { trigger: "sourceChanged", file: d.filename }, "system");
   });
 }
 
@@ -340,11 +352,11 @@ export async function setDocumentProvenance(caseId: string, docId: string, prove
 export async function setCaseReference(caseId: string, value: unknown, actor: string) {
   const reference = cleanReference(value);
   await ensureSeeded();
-  if (!(await getStore().getCase(caseId))) throw new UserError("Case not found.", 404);
+  if (!(await getStore().getCase(caseId))) throw new UserError("caseNotFound", { status: 404 });
   return getStore().updateCase(caseId, (c) => {
     if ((c.reference ?? null) === reference) return;
     c.reference = reference;
-    c.events.push(event(actor, "reference_changed", reference ? `Reference set to “${reference}”.` : "Reference removed."));
+    c.events.push(logged(actor, "reference_changed", reference ? { reference } : {}));
   });
 }
 
@@ -355,13 +367,13 @@ export async function setCaseReference(caseId: string, value: unknown, actor: st
 export async function setCaseArchived(caseId: string, archived: boolean, actor: string) {
   await ensureSeeded();
   const c0 = await getStore().getCase(caseId);
-  if (!c0) throw new UserError("Case not found.", 404);
-  if (c0.synthetic) throw new UserError("Synthetic demonstration cases cannot be archived. Use Reset demo case instead.");
+  if (!c0) throw new UserError("caseNotFound", { status: 404 });
+  if (c0.synthetic) throw new UserError("archiveDemo");
   return getStore().updateCase(caseId, (c) => {
     if (!!c.archivedAt === archived) return;
     c.archivedAt = archived ? now() : null;
     c.archivedBy = archived ? actor : null;
-    c.events.push(event(actor, archived ? "case_archived" : "case_restored", archived ? "Case archived. It is hidden from the dashboard and review queue; its documents and history are kept." : "Case restored from the archive."));
+    c.events.push(logged(actor, archived ? "case_archived" : "case_restored", {}));
   });
 }
 
@@ -501,7 +513,7 @@ export async function processDocument(caseId: string, docId: string, actor: stri
   const store = getStore();
   const c0 = await getCase(caseId);
   const doc0 = c0?.documents.find((d) => d.id === docId);
-  if (!c0 || !doc0) throw new UserError("Document not found.");
+  if (!c0 || !doc0) throw new UserError("documentNotFound");
 
   await store.updateCase(caseId, (c) => {
     const d = c.documents.find((x) => x.id === docId)!;
@@ -566,26 +578,24 @@ export async function processDocument(caseId: string, docId: string, actor: stri
     d.sampleId = sampleId;
     if (forensics) d.forensics = forensics;
     const found = forensics?.indicators.filter((i) => i.severity === "potential").length ?? 0;
-    const outcome = status === "extracted" ? "was read and checked." : status === "not_configured" ? "was stored but not read: demo mode only reads the sample documents." : "could not be read. Try again, or check it yourself.";
-    c.events.push(
-      event(actor, "document_extracted", `${d.filename} ${outcome}${found ? ` ${found} possible sign${found === 1 ? "" : "s"} of editing found.` : ""}`, { technical: detail }),
-    );
-    evaluateRules(c, `document processed: ${d.filename}`, "system");
+    const outcome = status === "extracted" ? "read" : status === "not_configured" ? "not_read" : "failed";
+    c.events.push(logged(actor, "document_extracted", { file: d.filename, outcome, edits: found }, { technical: detail }));
+    evaluateRules(c, { trigger: "documentProcessed", file: d.filename }, "system");
   });
 }
 
 const RESOLUTIONS: Resolution[] = ["resolved", "unresolved", "more_info_requested"];
 
 export async function addReview(caseId: string, findingId: string, input: { resolution: string; note: string }, actor: string) {
-  if (!(RESOLUTIONS as string[]).includes(input.resolution)) throw new UserError("Choose a resolution.");
+  if (!(RESOLUTIONS as string[]).includes(input.resolution)) throw new UserError("chooseResolution");
   const note = input.note.trim();
-  if (note.length < 3) throw new UserError("Add a short note explaining the decision.");
-  if (note.length > 2000) throw new UserError("The note is too long (2,000 characters max).");
+  if (note.length < 3) throw new UserError("noteTooShort");
+  if (note.length > 2000) throw new UserError("noteTooLong", { values: { max: 2000 } });
   await ensureSeeded();
   return getStore().updateCase(caseId, (c) => {
     const run = c.ruleRuns[c.ruleRuns.length - 1];
     const f = currentFindings(c).find((x) => x.id === findingId);
-    if (!run || !f) throw new UserError("That finding no longer exists in the latest rule run.");
+    if (!run || !f) throw new UserError("findingGone");
     c.reviews.push({
       id: randomUUID(),
       findingId,
@@ -596,7 +606,7 @@ export async function addReview(caseId: string, findingId: string, input: { reso
       reviewer: actor,
       at: now(),
     });
-    c.events.push(event(actor, "review_recorded", `${f.title}: marked “${RESOLUTION_LABEL[input.resolution as Resolution]}”. The check's own result (${STATUS_LABEL[f.status]}) is kept.`));
+    c.events.push(logged(actor, "review_recorded", { findingId: f.id, title: f.title, resolution: input.resolution, status: f.status }));
   });
 }
 
@@ -613,7 +623,7 @@ export interface ClaimInput {
 }
 
 function cleanClaim(input: ClaimInput): ClaimProposal & { source: ClaimSource } {
-  if (!(CLAIM_TYPES as string[]).includes(input.type)) throw new UserError("Unknown claim type.");
+  if (!(CLAIM_TYPES as string[]).includes(input.type)) throw new UserError("claimType");
   const type = input.type as ClaimProposal["type"];
   const s = input.stated ?? {};
   const stated: ClaimProposal["stated"] = {};
@@ -635,13 +645,13 @@ function cleanClaim(input: ClaimInput): ClaimProposal & { source: ClaimSource } 
  * replaces (withdraws) the earlier one, so each type has one active claim.
  */
 export async function addClaims(caseId: string, inputs: ClaimInput[], actor: string) {
-  if (!Array.isArray(inputs) || inputs.length === 0) throw new UserError("Add at least one claim.");
-  if (inputs.length > MAX_CLAIMS) throw new UserError(`At most ${MAX_CLAIMS} claims at a time.`);
+  if (!Array.isArray(inputs) || inputs.length === 0) throw new UserError("claimsNone");
+  if (inputs.length > MAX_CLAIMS) throw new UserError("claimsTooMany", { values: { max: MAX_CLAIMS } });
   const cleaned = inputs.map(cleanClaim);
   const types = cleaned.map((c) => c.type);
-  if (new Set(types).size !== types.length) throw new UserError("Only one claim of each type can be added at a time.");
+  if (new Set(types).size !== types.length) throw new UserError("claimsDuplicateType");
   await ensureSeeded();
-  if (!(await getStore().getCase(caseId))) throw new UserError("Case not found.");
+  if (!(await getStore().getCase(caseId))) throw new UserError("caseNotFound");
   return getStore().updateCase(caseId, (c) => {
     c.claims ??= [];
     const at = now();
@@ -649,9 +659,9 @@ export async function addClaims(caseId: string, inputs: ClaimInput[], actor: str
       for (const old of c.claims.filter((x) => x.type === cl.type && !x.withdrawn)) old.withdrawn = true;
       const claim: Claim = { id: randomUUID().slice(0, 8), type: cl.type, stated: cl.stated, source: cl.source, sourceText: cl.sourceText || null, createdBy: actor, createdAt: at };
       c.claims.push(claim);
-      c.events.push(event(actor, "claim_added", `Seller claim recorded: ${CLAIM_TYPE_LABEL[cl.type]}${cl.sourceText ? ` (“${cl.sourceText}”)` : ""}.`));
+      c.events.push(logged(actor, "claim_added", { type: cl.type, ...(cl.sourceText ? { source: cl.sourceText } : {}) }));
     }
-    evaluateRules(c, "claims updated", "system");
+    evaluateRules(c, { trigger: "claimsUpdated" }, "system");
   });
 }
 
@@ -660,10 +670,10 @@ export async function withdrawClaim(caseId: string, claimId: string, actor: stri
   await ensureSeeded();
   return getStore().updateCase(caseId, (c) => {
     const cl = (c.claims ?? []).find((x) => x.id === claimId && !x.withdrawn);
-    if (!cl) throw new UserError("Claim not found.");
+    if (!cl) throw new UserError("claimNotFound");
     cl.withdrawn = true;
-    c.events.push(event(actor, "claim_withdrawn", `Seller claim withdrawn: ${CLAIM_TYPE_LABEL[cl.type]}.`));
-    evaluateRules(c, "claims updated", "system");
+    c.events.push(logged(actor, "claim_withdrawn", { type: cl.type }));
+    evaluateRules(c, { trigger: "claimsUpdated" }, "system");
   });
 }
 
@@ -679,9 +689,9 @@ const MAX_REGISTRY_CHECKS = 10;
 export async function runRegistryCheck(caseId: string, provider: "nhtsa_vpic" | "nzta_mvr", actor: string, fetchImpl: typeof fetch = fetch) {
   await ensureSeeded();
   const c0 = await getStore().getCase(caseId);
-  if (!c0) throw new UserError("Case not found.");
+  if (!c0) throw new UserError("caseNotFound");
   const vin = normalizeVin(c0.vehicle.vin ?? "");
-  if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) throw new UserError("Enter a 17-character VIN on the case first.");
+  if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) throw new UserError("vinRequired");
   const r = provider === "nzta_mvr" ? await lookupVin11(vin, fetchImpl) : await decodeVin(vin, c0.vehicle.year, fetchImpl);
   log({ step: "registry_check", provider, outcome: r.outcome });
   const check: RegistryCheck = {
@@ -700,8 +710,9 @@ export async function runRegistryCheck(caseId: string, provider: "nhtsa_vpic" | 
   return getStore().updateCase(caseId, (c) => {
     c.registryChecks = [...(c.registryChecks ?? []), check].slice(-MAX_REGISTRY_CHECKS);
     const what = r.outcome === "ok" ? (provider === "nzta_mvr" ? r.message : [r.data.modelYear, r.data.make, r.data.model].filter(Boolean).join(" ")) : r.message;
-    c.events.push(event(actor, "registry_check", `${check.providerName}: ${what}`));
-    evaluateRules(c, `${check.providerName} checked`, "system");
+    // What the outside service answered is kept as received, so this event is not reworded.
+    c.events.push(event(actor, "registry_check", `${check.providerName}: ${what}`, { params: { provider: check.providerName } }));
+    evaluateRules(c, { trigger: "registry", provider: check.providerName }, "system");
   });
 }
 
@@ -727,22 +738,21 @@ export async function addVerification(
 ) {
   const method = VERIFICATION_METHODS.find((m) => m === input.method);
   const outcome = VERIFICATION_OUTCOMES.find((o) => o === input.outcome);
-  if (!method) throw new UserError("Choose how the document was checked.");
-  if (!outcome) throw new UserError("Choose what the issuer said.");
+  if (!method) throw new UserError("verifyMethod");
+  if (!outcome) throw new UserError("verifyOutcome");
   const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
   const contact = str(input.contact, 200);
   const reference = str(input.reference, 120);
   const note = str(input.note, 2000);
-  if (contact.length < 3) throw new UserError("Say who you contacted (organisation, and person or channel).");
-  if (outcome === "confirmed" && !reference && note.length < 5) throw new UserError("Add the reference number they gave, or a note on what they confirmed.");
+  if (contact.length < 3) throw new UserError("verifyContact");
+  if (outcome === "confirmed" && !reference && note.length < 5) throw new UserError("verifyReference");
   await ensureSeeded();
   return getStore().updateCase(caseId, (c) => {
     const d = c.documents.find((x) => x.id === docId);
-    if (!d) throw new UserError("Document not found.");
+    if (!d) throw new UserError("documentNotFound");
     d.verifications ??= [];
     d.verifications.push({ id: randomUUID(), method, outcome, contact, reference, note, by: actor, at: now() });
-    const said = outcome === "confirmed" ? "confirmed it issued the document" : outcome === "denied" ? "said it did NOT issue the document" : "did not respond";
-    c.events.push(event(actor, "issuer_verification", `${d.filename}: ${contact} ${said} (${method.replace(/_/g, " ")}${reference ? `, ref. ${reference}` : ""}).`));
-    evaluateRules(c, `issuer verification: ${d.filename}`, "system");
+    c.events.push(logged(actor, "issuer_verification", { file: d.filename, contact, outcome, method, ...(reference ? { reference } : {}) }));
+    evaluateRules(c, { trigger: "verification", file: d.filename }, "system");
   });
 }
