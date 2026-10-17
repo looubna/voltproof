@@ -4,7 +4,7 @@ Evidence review for used electric vehicles. **Gemini reads. Rules decide. People
 
 VoltProof helps a dealer, lender or buyer check what a seller claims about a used EV (battery health, mileage, accident history, charging) against the paperwork. Each claim gets one status — Verified, Consistent, Conflict or Unknown — with the page and quote behind it. It extracts facts from documents with Gemini, compares them with deterministic rules, shows conflicts and missing evidence, and records each human decision in an audit trail. It is not a valuation engine, a battery tester or a fraud detector.
 
-**Live demo:** https://voltproof-app-815094766024.asia-northeast3.run.app (Google Cloud Run · Gemini 2.5 Flash on Vertex AI · ADK agent). The public landing page (waitlist and demo requests) is at `/`; "See the live demo" leads to sign-in. Sign in with any name; the access code is shared with the judges privately. Synthetic demo cases only.
+**Live demo:** https://voltproof-git-815094766024.asia-northeast3.run.app (Google Cloud Run · Gemini 2.5 Flash on Vertex AI · ADK agent). The public landing page (waitlist and demo requests) is at `/`; "See the live demo" leads to sign-in. Sign in with any name; the access code is shared with the judges privately. Synthetic demo cases only.
 
 **Demo video (2:53):** [`docs/voltproof-demo.mp4`](docs/voltproof-demo.mp4), recorded against the live deployment. Waits for live Gemini, OCR and agent calls are sped up and labelled.
 
