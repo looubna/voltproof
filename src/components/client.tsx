@@ -1,15 +1,52 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState, useTransition, type FormEvent } from "react";
 import { PROVENANCE_LABEL } from "@/lib/labels";
+import { vinFormatProblem, normalizeVin } from "@/lib/normalize";
 import type { Provenance } from "@/lib/types";
+import { checkDigit, isNorthAmerican } from "@/lib/vin";
 
-async function post(url: string, body: unknown) {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+/** An API error with its HTTP status and any structured details the route returned. */
+class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly data: Record<string, unknown>,
+  ) {
+    super(message);
+  }
+}
+
+async function send(method: "POST" | "PATCH", url: string, body: unknown) {
+  const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw new ApiError(data.error ?? `Request failed (${res.status})`, res.status, data);
   return data;
+}
+
+const post = (url: string, body: unknown) => send("POST", url, body);
+
+/**
+ * router.refresh() inside a transition: `refreshing` stays true until the fresh
+ * server render has committed, so a button can stay busy until the screen is current.
+ */
+function useRefresh() {
+  const router = useRouter();
+  const [refreshing, startTransition] = useTransition();
+  return { router, refreshing, refresh: () => startTransition(() => router.refresh()) };
+}
+
+/** Seconds since `since`, updated every second while mounted. */
+function Elapsed({ since }: { since?: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!since) return null;
+  return <span className="tabular-nums"> {Math.max(0, Math.round((now - since) / 1000))} s</span>;
 }
 
 function ErrorNote({ error }: { error: string | null }) {
@@ -67,11 +104,12 @@ export function LoginForm({ needsCode }: { needsCode: boolean }) {
   );
 }
 
-export function SignOutButton() {
+export function SignOutButton({ className = "text-xs text-white/70 hover:text-white" }: { className?: string }) {
   const router = useRouter();
   return (
     <button
-      className="text-xs text-white/70 hover:text-white"
+      type="button"
+      className={className}
       onClick={async () => {
         await fetch("/api/auth/logout", { method: "POST" });
         router.replace("/login");
@@ -91,7 +129,15 @@ interface PendingFile {
   provenance: Provenance;
   state: UploadState;
   message?: string;
+  /** Set once the file is stored, so a retry only re-reads it and a source change is saved to it. */
+  caseId?: string;
+  docId?: string;
+  /** When the current step started, for the elapsed-time display. */
+  startedAt?: number;
+  sourceNote?: string;
 }
+
+type UpdateFile = (i: number, p: Partial<PendingFile>) => void;
 
 const ACCEPT = ".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png";
 const STATE_TEXT: Record<UploadState, string> = {
@@ -102,12 +148,34 @@ const STATE_TEXT: Record<UploadState, string> = {
   not_read: "Stored, not read",
   error: "Failed",
 };
+// The source decides what a document can verify (only dealer-captured readings are Verified),
+// so it is never guessed from the file name: every file starts at the least-trusted source.
+const DEFAULT_PROVENANCE: Provenance = "seller_provided";
+const UPLOAD_CONCURRENCY = 3;
 
-function guessProvenance(name: string): Provenance {
-  return /dash|odo|photo|img_|\.jpe?g$|\.png$/i.test(name) ? "dealer_captured" : /battery|soh|diagnos/i.test(name) ? "dealer_ordered" : "seller_provided";
+/** "about a minute", "a few seconds": how long reading one document usually takes. */
+function typicalWait(seconds: number) {
+  return seconds >= 45 ? "about a minute" : seconds >= 15 ? `about ${seconds} seconds` : "a few seconds";
 }
 
-export function FilePicker({ files, setFiles, maxMb, disabled }: { files: PendingFile[]; setFiles: (f: PendingFile[]) => void; maxMb: number; disabled?: boolean }) {
+export function FilePicker({
+  files,
+  setFiles,
+  update,
+  maxMb,
+  disabled,
+  onSourceSaved,
+  typicalSeconds,
+}: {
+  files: PendingFile[];
+  setFiles: (f: PendingFile[]) => void;
+  update: UpdateFile;
+  maxMb: number;
+  disabled?: boolean;
+  onSourceSaved?: () => void;
+  /** How long reading one document usually takes on this server, for the progress message. */
+  typicalSeconds: number;
+}) {
   const [error, setError] = useState<string | null>(null);
   function add(list: FileList | null) {
     if (!list) return;
@@ -116,10 +184,23 @@ export function FilePicker({ files, setFiles, maxMb, disabled }: { files: Pendin
     for (const f of Array.from(list)) {
       if (!/\.(pdf|jpe?g|png)$/i.test(f.name)) rejected.push(`${f.name} (type not supported)`);
       else if (f.size > maxMb * 1024 * 1024) rejected.push(`${f.name} (over ${maxMb} MB)`);
-      else ok.push({ file: f, provenance: guessProvenance(f.name), state: "queued" });
+      else ok.push({ file: f, provenance: DEFAULT_PROVENANCE, state: "queued" });
     }
     setError(rejected.length ? `Not added: ${rejected.join(", ")}. Use PDF, JPG or PNG up to ${maxMb} MB.` : null);
     setFiles([...files, ...ok]);
+  }
+  async function changeSource(i: number, provenance: Provenance) {
+    const p = files[i];
+    if (!p.docId || !p.caseId) return update(i, { provenance });
+    // Already stored: save the correction to the document (audited, rules re-run).
+    update(i, { provenance, sourceNote: "Saving source…" });
+    try {
+      await send("PATCH", `/api/cases/${p.caseId}/documents/${p.docId}`, { provenance });
+      update(i, { sourceNote: "Source saved." });
+      onSourceSaved?.();
+    } catch (e) {
+      update(i, { provenance: p.provenance, sourceNote: `Source not changed: ${(e as Error).message}` });
+    }
   }
   return (
     <div className="grid gap-3">
@@ -129,102 +210,173 @@ export function FilePicker({ files, setFiles, maxMb, disabled }: { files: Pendin
         <input type="file" multiple accept={ACCEPT} className="sr-only" onChange={(e) => (add(e.target.files), (e.target.value = ""))} disabled={disabled} />
       </label>
       <ErrorNote error={error} />
+      <UploadProgress files={files} typicalSeconds={typicalSeconds} />
       {files.length > 0 && (
         <ul className="divide-y divide-line rounded-xl border border-line bg-[#fdfcfa]">
-          {files.map((p, i) => (
-            <li key={i} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">{p.file.name}</div>
-                <div className="text-xs text-muted">{(p.file.size / 1024).toFixed(0)} KB</div>
-              </div>
-              <select
-                className="input w-auto py-1 text-xs"
-                value={p.provenance}
-                disabled={p.state !== "queued"}
-                onChange={(e) => setFiles(files.map((x, j) => (j === i ? { ...x, provenance: e.target.value as Provenance } : x)))}
-                aria-label={`Where ${p.file.name} came from`}
-              >
-                {(Object.keys(PROVENANCE_LABEL) as Provenance[]).map((k) => (
-                  <option key={k} value={k}>
-                    {PROVENANCE_LABEL[k]}
-                  </option>
-                ))}
-              </select>
-              <span
-                className={`w-36 text-right text-xs font-medium ${p.state === "error" ? "text-red-700" : p.state === "done" ? "text-verified-fg" : p.state === "not_read" ? "text-conflict-fg" : "text-muted"}`}
-                title={p.message}
-              >
-                {STATE_TEXT[p.state]}
-              </span>
-              {p.state === "queued" && (
-                <button type="button" className="text-xs text-muted hover:text-red-700" onClick={() => setFiles(files.filter((_, j) => j !== i))}>
-                  Remove
-                </button>
-              )}
-              {p.message && p.state !== "done" ? <p className="w-full text-xs text-muted">{p.message}</p> : null}
-            </li>
-          ))}
+          {files.map((p, i) => {
+            const working = p.state === "uploading" || p.state === "reading";
+            return (
+              <li key={i} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{p.file.name}</div>
+                  <div className="text-xs text-muted">{(p.file.size / 1024).toFixed(0)} KB</div>
+                </div>
+                <select
+                  className="input w-auto py-1 text-xs"
+                  value={p.provenance}
+                  disabled={working}
+                  onChange={(e) => changeSource(i, e.target.value as Provenance)}
+                  aria-label={`Where ${p.file.name} came from`}
+                  title={p.docId ? "Changing this updates the stored document and is recorded in the case history." : undefined}
+                >
+                  {(Object.keys(PROVENANCE_LABEL) as Provenance[]).map((k) => (
+                    <option key={k} value={k}>
+                      {PROVENANCE_LABEL[k]}
+                    </option>
+                  ))}
+                </select>
+                <span className={`w-40 text-right text-xs font-medium ${p.state === "error" ? "text-red-700" : p.state === "done" ? "text-verified-fg" : p.state === "not_read" ? "text-conflict-fg" : "text-muted"}`}>
+                  {STATE_TEXT[p.state]}
+                  {working ? <Elapsed key={p.startedAt} since={p.startedAt} /> : null}
+                </span>
+                {p.state === "reading" ? (
+                  <div className="grid w-full gap-1">
+                    <div className="progress" role="progressbar" aria-label={`Reading ${p.file.name}`} aria-valuetext="In progress" />
+                    <p className="text-xs text-muted">Reading and checking usually takes {typicalWait(typicalSeconds)} per document. Keep this page open.</p>
+                  </div>
+                ) : null}
+                {p.state === "queued" && (
+                  <button type="button" className="text-xs text-muted hover:text-red-700" onClick={() => setFiles(files.filter((_, j) => j !== i))}>
+                    Remove
+                  </button>
+                )}
+                {p.message && p.state !== "done" ? <p className="w-full text-xs text-muted">{p.message}</p> : null}
+                {p.sourceNote ? <p className="w-full text-xs text-muted">{p.sourceNote}</p> : null}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
   );
 }
 
-/** Uploads and processes each file in turn, updating per-file state. */
-async function uploadAll(caseId: string, files: PendingFile[], update: (i: number, p: Partial<PendingFile>) => void) {
+/** One live summary for screen readers and sighted users: "2 of 4 documents done". */
+function UploadProgress({ files, typicalSeconds }: { files: PendingFile[]; typicalSeconds: number }) {
+  const started = files.filter((f) => f.state !== "queued");
+  if (!started.length) return <p className="sr-only" aria-live="polite" />;
+  const finished = files.filter((f) => f.state === "done" || f.state === "not_read" || f.state === "error").length;
+  const failed = files.filter((f) => f.state === "error").length;
+  const working = files.some((f) => f.state === "uploading" || f.state === "reading");
+  return (
+    <p aria-live="polite" className="text-sm font-medium text-ink">
+      {working
+        ? `${finished} of ${files.length} document${files.length === 1 ? "" : "s"} done. Each takes ${typicalWait(typicalSeconds)}; up to ${UPLOAD_CONCURRENCY} are read at once.`
+        : `All ${files.length} document${files.length === 1 ? "" : "s"} processed${failed ? `, ${failed} failed` : ""}.`}
+    </p>
+  );
+}
+
+/**
+ * Uploads and reads every queued or failed file, a few at a time, updating
+ * per-file state. A file that was stored but failed to read is only re-read.
+ */
+async function uploadAll(caseId: string, files: PendingFile[], update: UpdateFile) {
+  const jobs = files.map((f, i) => ({ f, i })).filter(({ f }) => f.state === "queued" || f.state === "error");
   let failures = 0;
-  for (let i = 0; i < files.length; i++) {
-    if (files[i].state !== "queued") continue;
-    try {
-      update(i, { state: "uploading" });
-      const form = new FormData();
-      form.set("file", files[i].file);
-      form.set("provenance", files[i].provenance);
-      const res = await fetch(`/api/cases/${caseId}/documents`, { method: "POST", body: form });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "Upload failed");
-      update(i, { state: "reading" });
-      const r = await post(`/api/cases/${caseId}/documents/${data.id}/process`, {});
-      if (r.status === "extracted") update(i, { state: "done", message: r.mode === "demo-fixture" ? "Synthetic sample recognised; demo fixture used." : undefined });
-      else if (r.status === "not_configured") update(i, { state: "not_read", message: r.error });
-      else {
+  let next = 0;
+  async function worker() {
+    while (next < jobs.length) {
+      const { f, i } = jobs[next++];
+      try {
+        let docId = f.docId;
+        if (!docId) {
+          update(i, { state: "uploading", startedAt: Date.now(), message: undefined });
+          const form = new FormData();
+          form.set("file", f.file);
+          form.set("provenance", f.provenance);
+          const res = await fetch(`/api/cases/${caseId}/documents`, { method: "POST", body: form });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error ?? "Upload failed");
+          docId = data.id as string;
+          update(i, { caseId, docId });
+        }
+        update(i, { state: "reading", startedAt: Date.now(), message: undefined });
+        const r = await post(`/api/cases/${caseId}/documents/${docId}/process`, {});
+        if (r.status === "extracted") update(i, { state: "done", message: r.mode === "demo-fixture" ? "Sample document recognised: demo values, no AI used." : undefined });
+        else if (r.status === "not_configured") update(i, { state: "not_read", message: r.error });
+        else {
+          failures++;
+          update(i, { state: "error", message: r.error ?? "Extraction failed" });
+        }
+      } catch (e) {
         failures++;
-        update(i, { state: "error", message: r.error ?? "Extraction failed" });
+        update(i, { state: "error", message: (e as Error).message });
       }
-    } catch (e) {
-      failures++;
-      update(i, { state: "error", message: (e as Error).message });
     }
   }
+  await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, jobs.length) }, worker));
   return failures;
 }
 
 function useFileQueue() {
   const [files, setFiles] = useState<PendingFile[]>([]);
-  const update = (i: number, p: Partial<PendingFile>) => setFiles((prev) => prev.map((x, j) => (j === i ? { ...x, ...p } : x)));
+  const update: UpdateFile = (i, p) => setFiles((prev) => prev.map((x, j) => (j === i ? { ...x, ...p } : x)));
   return { files, setFiles, update };
 }
 
-export function NewCaseForm({ maxMb }: { maxMb: number }) {
+interface CaseMatch {
+  id: string;
+  caseNumber: string;
+  vehicle: string;
+  createdAt: string;
+  archived: boolean;
+}
+
+export function NewCaseForm({ maxMb, typicalSeconds }: { maxMb: number; typicalSeconds: number }) {
   const router = useRouter();
   const { files, setFiles, update } = useFileQueue();
-  const [vehicle, setVehicle] = useState({ make: "", model: "", year: "", vin: "" });
+  const [vehicle, setVehicle] = useState({ make: "", model: "", year: "", vin: "", reference: "" });
+  const [vinTouched, setVinTouched] = useState(false);
+  const [duplicates, setDuplicates] = useState<CaseMatch[]>([]);
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [caseId, setCaseId] = useState<string | null>(null);
 
+  const vin = normalizeVin(vehicle.vin);
+  const vinProblem = vinFormatProblem(vin);
+  const showVinProblem = !!vinProblem && (vinTouched || vin.length >= 17);
+  // A wrong check digit is only a hint: outside North America many makers do not use one.
+  const vinHint = !vinProblem && vin && isNorthAmerican(vin) && checkDigit(vin) === "invalid" ? "Position 9 does not match this VIN's check digit. Check the VIN plate for a mistyped character." : null;
+  const needsConfirm = duplicates.length > 0 && !confirmDuplicate;
+
+  async function checkDuplicates(v: string) {
+    if (!v || vinFormatProblem(v)) return setDuplicates([]);
+    try {
+      const res = await fetch(`/api/cases?vin=${encodeURIComponent(v)}`);
+      const data = (await res.json().catch(() => ({}))) as { cases?: CaseMatch[] };
+      setDuplicates(data.cases ?? []);
+    } catch {
+      // The server checks again when the case is created.
+    }
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (vinProblem) return setVinTouched(true);
+    if (needsConfirm) return;
     setBusy(true);
     setError(null);
     try {
-      const id = caseId ?? (await post("/api/cases", vehicle)).id;
+      const id = caseId ?? (await post("/api/cases", { ...vehicle, vin, allowDuplicateVin: confirmDuplicate })).id;
       setCaseId(id);
       const failures = await uploadAll(id, files, update);
       if (failures === 0) router.push(`/cases/${id}`);
       else setError(`${failures} document(s) failed. The case was created; you can retry or open it.`);
     } catch (err) {
-      setError((err as Error).message);
+      if (err instanceof ApiError && err.status === 409 && Array.isArray(err.data.duplicates)) setDuplicates(err.data.duplicates as CaseMatch[]);
+      else setError((err as Error).message);
     } finally {
       setBusy(false);
     }
@@ -232,10 +384,10 @@ export function NewCaseForm({ maxMb }: { maxMb: number }) {
 
   const set = (k: keyof typeof vehicle) => (e: React.ChangeEvent<HTMLInputElement>) => setVehicle({ ...vehicle, [k]: e.target.value });
   return (
-    <form onSubmit={submit} className="grid gap-6">
+    <form onSubmit={submit} className="grid content-start gap-6">
       <section className="card p-5">
         <h2 className="mb-4 font-semibold">1 · Vehicle details</h2>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid items-start gap-4 sm:grid-cols-2">
           <label className="grid gap-1 text-sm">
             <span className="font-medium">Make</span>
             <input className="input" value={vehicle.make} onChange={set("make")} required placeholder="e.g. Hyundai" disabled={!!caseId} />
@@ -250,19 +402,73 @@ export function NewCaseForm({ maxMb }: { maxMb: number }) {
           </label>
           <label className="grid gap-1 text-sm">
             <span className="font-medium">VIN</span>
-            <input className="input font-mono uppercase" value={vehicle.vin} onChange={set("vin")} maxLength={20} placeholder="From the vehicle's VIN plate" disabled={!!caseId} />
-            <span className="text-xs text-muted">Every document is compared against this VIN.</span>
+            <input
+              className="input font-mono uppercase"
+              value={vehicle.vin}
+              onChange={(e) => {
+                set("vin")(e);
+                setDuplicates([]);
+                setConfirmDuplicate(false);
+              }}
+              onBlur={() => {
+                setVinTouched(true);
+                void checkDuplicates(vin);
+              }}
+              maxLength={20}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="17 characters, from the VIN plate"
+              disabled={!!caseId}
+              aria-invalid={showVinProblem}
+              aria-describedby="vin-help"
+            />
+            <span id="vin-help" className={`text-xs ${showVinProblem ? "font-medium text-red-700" : vinHint ? "text-conflict-fg" : "text-muted"}`}>
+              {showVinProblem ? vinProblem : (vinHint ?? "Optional. Every document is compared against this VIN.")}
+            </span>
+          </label>
+          <label className="grid gap-1 text-sm sm:col-span-2">
+            <span className="font-medium">
+              Your reference <span className="font-normal text-muted">(optional)</span>
+            </span>
+            <input className="input" value={vehicle.reference} onChange={set("reference")} maxLength={80} placeholder="e.g. Stock A-1042, or the seller's name" disabled={!!caseId} aria-describedby="ref-help" />
+            <span id="ref-help" className="text-xs text-muted">
+              Shown on the dashboard so you can tell similar cases apart.
+            </span>
           </label>
         </div>
+        {duplicates.length > 0 && !caseId && (
+          <div role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            <p className="font-medium">{duplicates.length === 1 ? "A case already exists" : `${duplicates.length} cases already exist`} for this VIN:</p>
+            <ul className="mt-1 grid gap-0.5">
+              {duplicates.slice(0, 5).map((d) => (
+                <li key={d.id}>
+                  <Link href={`/cases/${d.id}`} className="link">
+                    {d.caseNumber}
+                  </Link>{" "}
+                  · {d.vehicle}
+                  {d.archived ? " (archived)" : ""}
+                </li>
+              ))}
+              {duplicates.length > 5 ? <li className="text-xs">and {duplicates.length - 5} more</li> : null}
+            </ul>
+            <label className="mt-2 flex items-start gap-2">
+              <input type="checkbox" className="mt-0.5" checked={confirmDuplicate} onChange={(e) => setConfirmDuplicate(e.target.checked)} />
+              <span>This is a separate review of the same vehicle. Create a new case anyway.</span>
+            </label>
+          </div>
+        )}
       </section>
       <section className="card p-5">
         <h2 className="mb-1 font-semibold">2 · Documents</h2>
-        <p className="mb-4 text-sm text-muted">Say where each document came from. Only readings captured by dealership staff can be marked Verified.</p>
-        <FilePicker files={files} setFiles={setFiles} maxMb={maxMb} disabled={busy} />
+        <p className="mb-4 text-sm text-muted">
+          Say where each document came from. Every file starts as <strong>{PROVENANCE_LABEL[DEFAULT_PROVENANCE]}</strong>; choose <strong>{PROVENANCE_LABEL.dealer_captured}</strong> only for photos your staff took
+          themselves. Only those readings can be marked Verified.
+        </p>
+        <FilePicker files={files} setFiles={setFiles} update={update} maxMb={maxMb} disabled={busy} typicalSeconds={typicalSeconds} />
       </section>
       <ErrorNote error={error} />
-      <div className="flex flex-wrap gap-3">
-        <button className="btn btn-primary" disabled={busy}>
+      <div className="flex flex-wrap items-center gap-3">
+        <button className="btn btn-primary" disabled={busy || (!caseId && (needsConfirm || showVinProblem))}>
           {busy ? "Working…" : caseId ? "Retry failed uploads" : files.length ? `Create case and check ${files.length} document${files.length === 1 ? "" : "s"}` : "Create case"}
         </button>
         {caseId && (
@@ -275,29 +481,30 @@ export function NewCaseForm({ maxMb }: { maxMb: number }) {
   );
 }
 
-export function AddDocuments({ caseId, maxMb }: { caseId: string; maxMb: number }) {
-  const router = useRouter();
+export function AddDocuments({ caseId, maxMb, typicalSeconds }: { caseId: string; maxMb: number; typicalSeconds: number }) {
+  const { refresh, refreshing } = useRefresh();
   const { files, setFiles, update } = useFileQueue();
   const [busy, setBusy] = useState(false);
-  const queued = files.filter((f) => f.state === "queued").length;
+  const pending = files.filter((f) => f.state === "queued" || f.state === "error").length;
+  const working = busy || refreshing;
   return (
     <div className="grid gap-3">
-      <FilePicker files={files} setFiles={setFiles} maxMb={maxMb} disabled={busy} />
+      <FilePicker files={files} setFiles={setFiles} update={update} maxMb={maxMb} disabled={working} onSourceSaved={refresh} typicalSeconds={typicalSeconds} />
       {files.length > 0 && (
         <div className="flex gap-2">
           <button
             className="btn btn-primary"
-            disabled={busy || queued === 0}
+            disabled={working || pending === 0}
             onClick={async () => {
               setBusy(true);
               await uploadAll(caseId, files, update);
               setBusy(false);
-              router.refresh();
+              refresh();
             }}
           >
-            {busy ? "Working…" : `Upload and check ${queued} document${queued === 1 ? "" : "s"}`}
+            {busy ? "Working…" : refreshing ? "Updating…" : `Upload and check ${pending} document${pending === 1 ? "" : "s"}`}
           </button>
-          {!busy && queued === 0 && (
+          {!working && pending === 0 && (
             <button className="btn btn-secondary" onClick={() => setFiles([])}>
               Clear list
             </button>
@@ -308,21 +515,58 @@ export function AddDocuments({ caseId, maxMb }: { caseId: string; maxMb: number 
   );
 }
 
+/** Where a stored document came from, editable. Saving re-runs the rules and is recorded in the history. */
+export function DocumentSourceSelect({ caseId, docId, value }: { caseId: string; docId: string; value: Provenance }) {
+  const { refresh, refreshing } = useRefresh();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <select
+        className="input w-auto py-1 text-xs"
+        value={value}
+        disabled={busy || refreshing}
+        aria-label="Where this document came from"
+        onChange={async (e) => {
+          setBusy(true);
+          setError(null);
+          try {
+            await send("PATCH", `/api/cases/${caseId}/documents/${docId}`, { provenance: e.target.value });
+            refresh();
+          } catch (err) {
+            setError((err as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {(Object.keys(PROVENANCE_LABEL) as Provenance[]).map((k) => (
+          <option key={k} value={k}>
+            {PROVENANCE_LABEL[k]}
+          </option>
+        ))}
+      </select>
+      {busy || refreshing ? <span className="text-xs text-muted">Saving and re-checking…</span> : null}
+      {error ? <span className="text-xs text-red-700">{error}</span> : null}
+    </span>
+  );
+}
+
 export function ReprocessButton({ caseId, docId, label }: { caseId: string; docId: string; label: string }) {
-  const router = useRouter();
+  const { refresh, refreshing } = useRefresh();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
     <span className="inline-flex flex-col gap-1">
       <button
         className="btn btn-secondary py-1 text-xs"
-        disabled={busy}
+        disabled={busy || refreshing}
         onClick={async () => {
           setBusy(true);
           setError(null);
           try {
             await post(`/api/cases/${caseId}/documents/${docId}/process`, {});
-            router.refresh();
+            refresh();
           } catch (e) {
             setError((e as Error).message);
           } finally {
@@ -330,7 +574,7 @@ export function ReprocessButton({ caseId, docId, label }: { caseId: string; docI
           }
         }}
       >
-        {busy ? "Reading…" : label}
+        {busy ? "Reading…" : refreshing ? "Updating…" : label}
       </button>
       {error ? <span className="text-xs text-red-700">{error}</span> : null}
     </span>
@@ -344,25 +588,32 @@ const RESOLUTIONS = [
   { value: "unresolved", label: "Unresolved", hint: "Reviewed, but the issue still stands." },
   { value: "more_info_requested", label: "Needs more information", hint: "Waiting on the seller, a workshop or a test." },
 ];
+const MIN_NOTE = 3;
 
 export function ReviewForm({ caseId, findingId, reviewer }: { caseId: string; findingId: string; reviewer: string }) {
-  const router = useRouter();
+  const { refresh, refreshing } = useRefresh();
   const [resolution, setResolution] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const missing = [!resolution && "choose a decision", note.trim().length < MIN_NOTE && `write a note (at least ${MIN_NOTE} characters)`].filter(Boolean) as string[];
+  const noteId = `note-${findingId}`;
+  const working = busy || refreshing;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (missing.length) return;
     setBusy(true);
     setError(null);
+    setSaved(false);
     try {
       await post(`/api/cases/${caseId}/reviews`, { findingId, resolution, note });
       setNote("");
       setResolution("");
       setSaved(true);
-      router.refresh();
+      // Re-render the queue, counts and case header with the new decision; "Saved." shows once that is on screen.
+      refresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -374,7 +625,7 @@ export function ReviewForm({ caseId, findingId, reviewer }: { caseId: string; fi
     <form onSubmit={submit} className="grid gap-3 rounded-lg border border-line bg-canvas p-4">
       <div className="label">Record your decision</div>
       <fieldset className="grid gap-2 sm:grid-cols-3">
-        <legend className="sr-only">Resolution</legend>
+        <legend className="sr-only">Decision (required)</legend>
         {RESOLUTIONS.map((r) => (
           <label key={r.value} className={`cursor-pointer rounded-lg border bg-[#fdfcfa] p-2.5 text-sm ${resolution === r.value ? "border-brand-600 ring-1 ring-brand-600" : "border-line"}`}>
             <input type="radio" name={`res-${findingId}`} value={r.value} checked={resolution === r.value} onChange={() => setResolution(r.value)} className="sr-only" />
@@ -383,18 +634,99 @@ export function ReviewForm({ caseId, findingId, reviewer }: { caseId: string; fi
           </label>
         ))}
       </fieldset>
-      <label className="grid gap-1 text-sm">
-        <span className="font-medium">Reviewer note</span>
-        <textarea className="input min-h-20" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What did you check, and what did you find?" maxLength={2000} required />
+      <label className="grid gap-1 text-sm" htmlFor={noteId}>
+        <span className="font-medium">
+          Reviewer note <span className="font-normal text-muted">(required)</span>
+        </span>
+        <textarea
+          id={noteId}
+          className="input min-h-20"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="What did you check, and what did you find?"
+          maxLength={2000}
+          required
+          aria-describedby={`${noteId}-hint`}
+        />
       </label>
       <ErrorNote error={error} />
       <div className="flex flex-wrap items-center gap-3">
-        <button className="btn btn-primary" disabled={busy || !resolution || note.trim().length < 3}>
-          {busy ? "Saving…" : "Save review"}
+        <button className="btn btn-primary" disabled={working || missing.length > 0} aria-describedby={`${noteId}-hint`}>
+          {working ? "Saving…" : "Save review"}
         </button>
-        <span className="text-xs text-muted">Recorded as {reviewer} with a timestamp. The machine finding is kept unchanged.</span>
-        {saved && !busy ? <span className="text-xs font-medium text-verified-fg">Saved.</span> : null}
+        <span id={`${noteId}-hint`} className="text-xs text-muted">
+          {missing.length && !working ? <span className="font-medium text-ink">To save, {missing.join(" and ")}. </span> : null}
+          Recorded as {reviewer} with a timestamp. The machine finding is kept unchanged.
+        </span>
+        {saved && !working ? (
+          <span role="status" className="text-xs font-medium text-verified-fg">
+            Saved.
+          </span>
+        ) : null}
       </div>
+    </form>
+  );
+}
+
+const STATUS_FILTERS = [
+  { value: "", label: "Any status" },
+  { value: "conflict", label: "Conflicts" },
+  { value: "unknown", label: "Missing evidence" },
+];
+
+/** Case, status and text filters for the review queue. Each change updates the URL, so a view can be shared or reloaded. */
+export function ReviewFilters({ cases, showCase }: { cases: { id: string; label: string }[]; showCase: boolean }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const [pending, startTransition] = useTransition();
+  const [q, setQ] = useState(params.get("q") ?? "");
+
+  function apply(changes: Record<string, string>) {
+    const next = new URLSearchParams(params);
+    for (const [k, v] of Object.entries(changes)) {
+      if (v) next.set(k, v);
+      else next.delete(k);
+    }
+    next.delete("page");
+    startTransition(() => router.push(`${pathname}${next.size ? `?${next}` : ""}`, { scroll: false }));
+  }
+
+  return (
+    <form
+      role="search"
+      className="flex flex-wrap items-center gap-2 text-sm"
+      onSubmit={(e) => {
+        e.preventDefault();
+        apply({ q: q.trim() });
+      }}
+    >
+      {showCase && (
+        <select className="input input-inline w-auto" value={params.get("case") ?? ""} onChange={(e) => apply({ case: e.target.value })} aria-label="Filter by case">
+          <option value="">All cases</option>
+          {cases.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      )}
+      <select className="input input-inline w-auto" value={params.get("status") ?? ""} onChange={(e) => apply({ status: e.target.value })} aria-label="Filter by status">
+        {STATUS_FILTERS.map((s) => (
+          <option key={s.value} value={s.value}>
+            {s.label}
+          </option>
+        ))}
+      </select>
+      <input className="input input-inline w-48" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search findings" aria-label="Search findings" maxLength={80} />
+      <button className="btn btn-secondary py-1 text-xs" disabled={pending}>
+        Search
+      </button>
+      {pending ? (
+        <span role="status" className="text-xs text-muted">
+          Updating…
+        </span>
+      ) : null}
     </form>
   );
 }
@@ -410,7 +742,7 @@ export function PrintButton() {
 }
 
 export function ResetCaseButton({ caseId }: { caseId: string }) {
-  const router = useRouter();
+  const { refresh, refreshing } = useRefresh();
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   if (!armed)
@@ -424,20 +756,68 @@ export function ResetCaseButton({ caseId }: { caseId: string }) {
       <span className="text-muted">Discard reviews and uploads?</span>
       <button
         className="btn btn-primary"
-        disabled={busy}
+        disabled={busy || refreshing}
         onClick={async () => {
           setBusy(true);
           await post(`/api/cases/${caseId}/reset`, {});
           setBusy(false);
           setArmed(false);
-          router.refresh();
+          refresh();
         }}
       >
-        {busy ? "Resetting…" : "Yes, reset"}
+        {busy || refreshing ? "Resetting…" : "Yes, reset"}
       </button>
       <button className="btn btn-secondary" onClick={() => setArmed(false)}>
         Cancel
       </button>
+    </span>
+  );
+}
+
+/** Archive (or restore) a case. Nothing is deleted: the case keeps its documents and audit trail. */
+export function ArchiveCaseButton({ caseId, archived }: { caseId: string; archived: boolean }) {
+  const { refresh, refreshing } = useRefresh();
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/api/cases/${caseId}/archive`, { archived: !archived });
+      setArmed(false);
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (archived)
+    return (
+      <span className="inline-flex flex-col gap-1">
+        <button className="btn btn-secondary" disabled={busy || refreshing} onClick={run}>
+          {busy || refreshing ? "Restoring…" : "Restore case"}
+        </button>
+        {error ? <span className="text-xs text-red-700">{error}</span> : null}
+      </span>
+    );
+  if (!armed)
+    return (
+      <button className="btn btn-secondary" onClick={() => setArmed(true)}>
+        Archive case
+      </button>
+    );
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2 text-sm">
+      <span className="text-muted">Hide this case from the dashboard and review queue? Its history is kept.</span>
+      <button className="btn btn-primary" disabled={busy || refreshing} onClick={run}>
+        {busy || refreshing ? "Archiving…" : "Yes, archive"}
+      </button>
+      <button className="btn btn-secondary" onClick={() => setArmed(false)}>
+        Cancel
+      </button>
+      {error ? <span className="w-full text-xs text-red-700">{error}</span> : null}
     </span>
   );
 }
@@ -487,10 +867,10 @@ function blankDraft(type: ClaimTypeKey): DraftClaim {
 }
 
 export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defaultListing?: string }) {
-  const router = useRouter();
+  const { refresh, refreshing } = useRefresh();
   const [text, setText] = useState("");
   const [drafts, setDrafts] = useState<DraftClaim[]>([]);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<{ text: string; technical?: string } | null>(null);
   const [busy, setBusy] = useState<"parse" | "save" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -504,8 +884,11 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
     try {
       const r = (await post(`/api/cases/${caseId}/claims/parse`, { text })) as { proposals: Proposal[]; mode: string; model: string | null; note?: string; dropped: string[] };
       setDrafts(r.proposals.map(toDraft));
-      const source = r.mode === "vertex-gemini" ? `Read by ${r.model} (Gemini on Vertex AI).` : r.note ?? "";
-      setNote(r.proposals.length ? `${r.proposals.length} claim${r.proposals.length === 1 ? "" : "s"} found. Check them before saving. ${source}` : `No claims found in this text. ${source}`);
+      const n = r.proposals.length;
+      setNote({
+        text: n ? `${n} claim${n === 1 ? "" : "s"} found. Check ${n === 1 ? "it" : "them"} before saving.` : "No claims found in this text. You can add one by hand.",
+        technical: r.mode === "vertex-gemini" ? `Read by ${r.model} (Gemini on Vertex AI).` : r.note,
+      });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -532,10 +915,11 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
                   : { number: Number(d.number) },
         })),
       });
+      const n = drafts.length;
       setDrafts([]);
       setText("");
-      setNote(null);
-      router.refresh();
+      setNote({ text: `${n} claim${n === 1 ? "" : "s"} saved and checked. ${n === 1 ? "Its status is" : "Their statuses are"} shown above.` });
+      refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -570,7 +954,12 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
           </button>
         )}
       </div>
-      {note && <p className="text-xs text-muted">{note}</p>}
+      {note && (
+        <p role="status" className="text-sm text-ink">
+          {note.text}
+          {note.technical ? <span className="tech-detail text-xs text-muted"> {note.technical}</span> : null}
+        </p>
+      )}
       {drafts.length > 0 && (
         <ul className="grid gap-2">
           {drafts.map((d) => (
@@ -627,37 +1016,110 @@ export function ClaimsEditor({ caseId, defaultListing }: { caseId: string; defau
       )}
       <ErrorNote error={error} />
       {drafts.length > 0 && (
-        <button className="btn btn-primary justify-self-start" disabled={!!busy} onClick={save}>
-          {busy === "save" ? "Checking…" : `Save and check ${drafts.length} claim${drafts.length === 1 ? "" : "s"}`}
+        <button className="btn btn-primary justify-self-start" disabled={!!busy || refreshing} onClick={save}>
+          {busy === "save" || refreshing ? "Checking…" : `Save and check ${drafts.length} claim${drafts.length === 1 ? "" : "s"}`}
         </button>
       )}
     </div>
   );
 }
 
-export function WithdrawClaimButton({ caseId, claimId }: { caseId: string; claimId: string }) {
-  const router = useRouter();
+/** Withdraws a claim after a confirm step. The claim stays in the history; it is just no longer checked. */
+export function WithdrawClaimButton({ caseId, claimId, label }: { caseId: string; claimId: string; label: string }) {
+  const { refresh, refreshing } = useRefresh();
+  const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const working = busy || refreshing;
+  if (!armed)
+    return (
+      <button type="button" className="no-print btn btn-secondary px-3 py-1 text-xs" onClick={() => setArmed(true)} aria-label={`Withdraw claim: ${label}`}>
+        Withdraw
+      </button>
+    );
   return (
-    <button
-      className="no-print text-[11px] text-muted hover:text-red-700"
-      disabled={busy}
-      title="Withdraw this claim. It stays in the history but is no longer checked."
-      onClick={async () => {
+    <div role="group" aria-label={`Withdraw claim: ${label}`} className="no-print flex w-full flex-wrap items-center justify-end gap-2 rounded-lg bg-canvas px-3 py-2 text-sm sm:w-auto">
+      <span className="text-muted">Stop checking this claim? It stays in the history.</span>
+      <button
+        type="button"
+        className="btn btn-primary px-3 py-1 text-xs"
+        disabled={working}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            const res = await fetch(`/api/cases/${caseId}/claims/${claimId}`, { method: "DELETE" });
+            if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `Request failed (${res.status})`);
+            refresh();
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {working ? "Withdrawing…" : "Yes, withdraw"}
+      </button>
+      <button type="button" className="btn btn-secondary px-3 py-1 text-xs" disabled={working} onClick={() => setArmed(false)}>
+        Cancel
+      </button>
+      {error ? <span role="alert" className="w-full text-xs text-red-700">{error}</span> : null}
+    </div>
+  );
+}
+
+/** The reviewer's own label for a case (stock number, seller name), so similar cases can be told apart. */
+export function ReferenceEditor({ caseId, value }: { caseId: string; value: string | null }) {
+  const { refresh, refreshing } = useRefresh();
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!editing)
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2">
+        {value ? <span>{value}</span> : <span className="text-muted">None</span>}
+        <button type="button" className="text-sm font-medium text-brand-600 hover:underline" onClick={() => (setText(value ?? ""), setEditing(true))}>
+          {value ? "Edit" : "Add"}
+        </button>
+      </span>
+    );
+  return (
+    <form
+      className="grid gap-2"
+      onSubmit={async (e) => {
+        e.preventDefault();
         setBusy(true);
-        await fetch(`/api/cases/${caseId}/claims/${claimId}`, { method: "DELETE" });
-        router.refresh();
+        setError(null);
+        try {
+          await send("PATCH", `/api/cases/${caseId}`, { reference: text });
+          setEditing(false);
+          refresh();
+        } catch (err) {
+          setError((err as Error).message);
+        } finally {
+          setBusy(false);
+        }
       }}
     >
-      {busy ? "Withdrawing…" : "Withdraw"}
-    </button>
+      <input className="input" value={text} onChange={(e) => setText(e.target.value)} maxLength={80} placeholder="e.g. Stock A-1042, or the seller's name" aria-label="Your reference for this case" autoFocus />
+      <div className="flex gap-2">
+        <button className="btn btn-primary px-3 py-1 text-xs" disabled={busy || refreshing}>
+          {busy || refreshing ? "Saving…" : "Save"}
+        </button>
+        <button type="button" className="btn btn-secondary px-3 py-1 text-xs" onClick={() => setEditing(false)}>
+          Cancel
+        </button>
+      </div>
+      {error ? <span role="alert" className="text-xs text-red-700">{error}</span> : null}
+    </form>
   );
 }
 
 // ---------------------------------------------------------------- registry and issuer checks
 
-export function VinDecodeButton({ caseId, provider = "nhtsa_vpic", label = "Decode VIN with NHTSA vPIC" }: { caseId: string; provider?: "nhtsa_vpic" | "nzta_mvr"; label?: string }) {
-  const router = useRouter();
+export function VinDecodeButton({ caseId, provider = "nhtsa_vpic", label = "Look up the VIN (US database)" }: { caseId: string; provider?: "nhtsa_vpic" | "nzta_mvr"; label?: string }) {
+  const { refresh, refreshing } = useRefresh();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -670,7 +1132,7 @@ export function VinDecodeButton({ caseId, provider = "nhtsa_vpic", label = "Deco
           setError(null);
           try {
             await post(`/api/cases/${caseId}/registry`, { provider });
-            router.refresh();
+            refresh();
           } catch (e) {
             setError((e as Error).message);
           } finally {
@@ -678,7 +1140,7 @@ export function VinDecodeButton({ caseId, provider = "nhtsa_vpic", label = "Deco
           }
         }}
       >
-        {busy ? "Checking…" : label}
+        {busy || refreshing ? "Checking…" : label}
       </button>
       {error ? <span className="text-xs text-red-700">{error}</span> : null}
     </span>
@@ -694,7 +1156,7 @@ const METHOD_OPTIONS = [
 ];
 
 export function VerificationForm({ caseId, docId }: { caseId: string; docId: string }) {
-  const router = useRouter();
+  const { refresh, refreshing } = useRefresh();
   const [method, setMethod] = useState("issuer_phone");
   const [outcome, setOutcome] = useState("confirmed");
   const [contact, setContact] = useState("");
@@ -714,7 +1176,7 @@ export function VerificationForm({ caseId, docId }: { caseId: string; docId: str
           setContact("");
           setReference("");
           setNote("");
-          router.refresh();
+          refresh();
         } catch (err) {
           setError((err as Error).message);
         } finally {
@@ -738,8 +1200,8 @@ export function VerificationForm({ caseId, docId }: { caseId: string; docId: str
       <input className="input" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Reference they gave (optional)" />
       <textarea className="input min-h-16" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What they confirmed, e.g. invoice LS-26-08114, odometer 47,950 km" />
       <ErrorNote error={error} />
-      <button className="btn btn-primary justify-self-start" disabled={busy}>
-        {busy ? "Saving…" : "Record verification"}
+      <button className="btn btn-primary justify-self-start" disabled={busy || refreshing}>
+        {busy || refreshing ? "Saving…" : "Record verification"}
       </button>
     </form>
   );
@@ -748,28 +1210,39 @@ export function VerificationForm({ caseId, docId }: { caseId: string; docId: str
 // ---------------------------------------------------------------- evidence agent
 
 export function RunAgentButton({ caseId, disabled }: { caseId: string; disabled?: boolean }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
+  const { refresh, refreshing } = useRefresh();
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const busy = startedAt !== null;
   return (
     <div className="grid gap-2">
       <button
         className="btn btn-primary justify-self-start"
-        disabled={busy || disabled}
+        disabled={busy || refreshing || disabled}
         onClick={async () => {
-          setBusy(true);
+          setStartedAt(Date.now());
           setError(null);
           try {
             await post(`/api/cases/${caseId}/investigate`, {});
-            router.refresh();
+            // The agent has stored its run by now: show it (and any new statuses) without a manual reload.
+            refresh();
           } catch (e) {
             setError((e as Error).message);
           } finally {
-            setBusy(false);
+            setStartedAt(null);
           }
         }}
       >
-        {busy ? "Investigating… (up to a minute)" : "Run evidence agent"}
+        {busy ? (
+          <>
+            Investigating…
+            <Elapsed since={startedAt} /> (up to a minute)
+          </>
+        ) : refreshing ? (
+          "Loading the results…"
+        ) : (
+          "Run evidence agent"
+        )}
       </button>
       <ErrorNote error={error} />
     </div>
@@ -780,7 +1253,7 @@ export function CopyButton({ text }: { text: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
-      className="text-[11px] text-brand-600 hover:underline"
+      className="shrink-0 text-xs font-medium text-brand-600 hover:underline"
       onClick={async () => {
         await navigator.clipboard.writeText(text);
         setDone(true);

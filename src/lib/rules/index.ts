@@ -7,7 +7,7 @@
 //   the checks and listed as excluded evidence, so a misread cannot create or
 //   hide a conflict silently.
 
-import { DOC_TYPE_LABEL, FIELD_LABEL } from "../labels";
+import { DOC_TYPE_LABEL, FIELD_LABEL, fieldLabelInline, joinList } from "../labels";
 import {
   daysBetween,
   formatOdometer,
@@ -117,7 +117,9 @@ function plural(n: number, word: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Rule 1 — VIN consistency (battery reports are checked by rule 5)
+// Rule 1 — VIN consistency, across every document that shows a VIN (battery
+// reports included; rule 5 also checks them, because a report for another
+// vehicle says nothing about this one's battery)
 
 export function vinConsistency(input: RuleInput): Finding {
   const evidence: EvidenceRef[] = [];
@@ -126,7 +128,6 @@ export function vinConsistency(input: RuleInput): Finding {
 
   const vins: { vin: string; doc: CaseDocument }[] = [];
   for (const doc of readDocs(input.documents)) {
-    if (isBatteryReport(doc)) continue;
     const u = usable(doc, "vin");
     if (u.state === "ok") {
       vins.push({ vin: normalizeVin(String(u.value)), doc });
@@ -366,7 +367,7 @@ export function dateConsistency(input: RuleInput): Finding {
       }
       const p = parseIsoDate(String(u.value));
       if (!p.ok) {
-        problems.push(`${docLabel(doc)}: ${FIELD_LABEL[name].toLowerCase()} ${p.reason}`);
+        problems.push(`${docLabel(doc)}: ${fieldLabelInline(name)} ${p.reason}`);
         evidence.push(ref(doc, name, "Invalid date"));
         continue;
       }
@@ -539,9 +540,11 @@ export function vinStructure(input: RuleInput): Finding {
     vins.push({ vin: caseVin, where: "the case record", doc: null });
     evidence.push(caseRef("VIN", caseVin));
   }
+  let documentVins = 0;
   for (const doc of readDocs(input.documents)) {
     const u = usable(doc, "vin");
     if (u.state !== "ok") continue;
+    documentVins++;
     const v = normalizeVin(String(u.value));
     if (vins.some((x) => x.vin === v)) continue;
     vins.push({ vin: v, where: docLabel(doc), doc });
@@ -637,11 +640,38 @@ export function vinStructure(input: RuleInput): Finding {
       requiresReview: false,
     };
   }
+  const offline = `${plural(vins.length, "VIN")} checked: the format is valid, and the maker and model-year codes match the case record.${noteText}`;
+  const registerNote = register && register.outcome !== "ok" ? ` ${register.message}` : "";
+  if (decode) {
+    // A lookup that failed or did not recognise the VIN confirms nothing, so it is not shown as Consistent.
+    return {
+      ...base,
+      status: "unknown",
+      result:
+        decode.outcome === "not_found"
+          ? `${offline} The ${decode.providerName} could not identify this VIN: ${decode.message} Its coverage is best for vehicles sold in North America, so this is common for other markets, but the VIN is not confirmed by a reference source.${registerNote}`
+          : `${offline} The ${decode.providerName} lookup did not complete: ${decode.message}${registerNote}`,
+      nextAction: decode.outcome === "not_found" ? "Compare the VIN on the vehicle plate with the documents character by character, or check it with a registry for the vehicle's market." : "Run the VIN decode again.",
+      decisionImpact: false,
+      requiresReview: false,
+    };
+  }
+  if (documentVins === 0) {
+    // Only the VIN typed into the case: a valid format is not agreement between sources.
+    return {
+      ...base,
+      status: "unknown",
+      result: `${offline} No document shows a VIN and no VIN lookup has been run, so nothing confirms it yet.${registerNote}`,
+      nextAction: "Upload the registration document, or look the VIN up.",
+      decisionImpact: false,
+      requiresReview: false,
+    };
+  }
   return {
     ...base,
     status: "consistent",
-    result: `${plural(vins.length, "VIN")} checked offline: well-formed, and the manufacturer code and model-year code agree with the case record.${noteText}${decode ? ` The reference decoder returned "${decode.outcome}": ${decode.message}` : " No reference decoder was consulted."}${register && register.outcome !== "ok" ? ` ${register.message}` : ""}`,
-    nextAction: decode ? null : "Run a VIN decode against the manufacturer reference database.",
+    result: `${offline} No VIN lookup has been run yet.${registerNote}`,
+    nextAction: "Look the VIN up in a VIN database.",
     decisionImpact: false,
     requiresReview: false,
   };
@@ -843,10 +873,12 @@ export function integrityFindings(input: RuleInput): Finding[] {
       id: `integrity:${doc.id}`,
       ruleId: "integrity_indicators",
       category: "integrity",
-      title: fields.length ? `Possible edit to ${fields.map((f) => FIELD_LABEL[f].toLowerCase()).join(", ")}` : "Possible signs of document alteration",
-      checked: "File checks (type, editing software, revision history), digital signatures, and field-level forensic checks: text written over other text, values in a font nothing else on the page uses, annotations laid over values, and photo regions without the photo's compression history.",
+      title: fields.length ? `Possible edit to the ${joinList(fields.map(fieldLabelInline))}` : "Possible signs of document alteration",
+      checked: "File checks (type, editing software, revision history), digital signatures, and checks on each value: text typed over other text, values in a font nothing else on the page uses, notes laid over values, and areas of a photo that look pasted in or retouched.",
       evidence,
-      status: forensic.some((i) => i.code === "signature_broken") ? "conflict" : "unknown",
+      // A check that ties a possible edit to a specific value failed, as does a broken signature: both are
+      // Conflicts, like the claims resting on them. File-level hints alone (e.g. editing software) stay Unknown.
+      status: fields.length || forensic.some((i) => i.code === "signature_broken") ? "conflict" : "unknown",
       result:
         (fields.length
           ? `${plural(fields.length, "value")} in ${docLabel(doc)} show${fields.length === 1 ? "s" : ""} possible signs of editing, so ${fields.length === 1 ? "it is" : "they are"} not used by any check. `
@@ -948,6 +980,18 @@ export function authenticityFinding(input: RuleInput): Finding {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * Titles of the cross-document rule checks every case gets, in order (the
+ * per-document extraction, forensic and signature findings come on top).
+ * Derived from the rules themselves so documentation cannot drift from them.
+ */
+export function ruleCheckTitles(): string[] {
+  const empty: RuleInput = { vehicle: { make: "", model: "", year: null, vin: "" }, documents: [], referenceDate: "2000-01-01" };
+  return runRules(empty, { batteryReportMaxAgeDays: 90 })
+    .filter((f) => f.category !== "authenticity")
+    .map((f) => f.title);
+}
 
 export function runRules(input: RuleInput, opts: RuleOptions): Finding[] {
   const vin = vinConsistency(input);

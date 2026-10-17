@@ -13,9 +13,14 @@
   --color-brand-100: #dcf2e8;
   --color-brand-50: #eef7f2;
   --color-ink: #0f1c2b;
-  --color-muted: #5b6672;
+  /* 6.6:1 on the canvas, 7.2:1 on cards (WCAG AA needs 4.5:1). */
+  --color-muted: #4b5663;
   --color-line: #e0ddd4;
   --color-canvas: #f3f1ec;
+
+  /* The smallest text in the app: 13 px (Tailwind's default text-xs is 12 px). */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.25rem;
 
   --color-verified-bg: #e2f3ea;
   --color-verified-fg: #135e3b;
@@ -47,12 +52,53 @@ body {
   border-radius: 12px;
 }
 
+/* Section and field labels: sentence case reads more easily than small capitals. */
 .label {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
   font-weight: 600;
   color: var(--color-muted);
+}
+
+/* Model names, version numbers, hashes and scores: shown only when "Technical details" is on
+   (src/components/technical-toggle.tsx). Hidden content is also hidden from screen readers. */
+html:not([data-technical="on"]) .tech-detail {
+  display: none !important;
+}
+/* The plain alternative, hidden once technical details are on. */
+html[data-technical="on"] .tech-hide {
+  display: none !important;
+}
+
+/* A visible focus ring for keyboard users on every interactive element. */
+:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+/* Indeterminate progress (document reading): the server reports no percentage, so this only shows activity. */
+@keyframes vp-progress {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+.progress {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: var(--color-line);
+}
+.progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--color-brand-500);
+  animation: vp-progress 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress::after { animation: none; width: 100%; opacity: 0.45; }
 }
 
 .btn {

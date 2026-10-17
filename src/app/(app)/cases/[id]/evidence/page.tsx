@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ReprocessButton } from "@/components/client";
 import { CaseHeader, loadCase } from "@/components/case-header";
-import { FindingCard, StatusBadge, StatusLegend, docHref } from "@/components/ui";
+import { DateTime, FindingCard, StatusBadge, StatusLegend, docHref } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config";
 import { currentFindings, latestRun, reviewState } from "@/lib/derive";
@@ -21,17 +21,17 @@ function show(name: FieldName, f: ExtractedField<unknown>) {
 }
 
 const GROUNDING_TEXT: Record<GroundingResult, { text: string; cls: string; title: string }> = {
-  exact: { text: "found in PDF", cls: "bg-verified-bg text-verified-fg", title: "The quote appears word for word in the document's text on the cited page." },
-  fuzzy: { text: "found (close match)", cls: "bg-verified-bg text-verified-fg", title: "The quote closely matches the document's text (small spacing or character differences)." },
-  other_page: { text: "found on another page", cls: "bg-consistent-bg text-consistent-fg", title: "The quote appears in the document, on a different page than cited. The page was corrected." },
+  exact: { text: "quote found in the PDF", cls: "bg-verified-bg text-verified-fg", title: "The quote appears word for word in the document's text on the cited page." },
+  fuzzy: { text: "quote found (close match)", cls: "bg-verified-bg text-verified-fg", title: "The quote closely matches the document's text (small spacing or character differences)." },
+  other_page: { text: "quote found on another page", cls: "bg-consistent-bg text-consistent-fg", title: "The quote appears in the document, on a different page than cited. The page was corrected." },
   not_found: { text: "quote not found", cls: "bg-conflict-bg text-conflict-fg", title: "The quote does not appear in the document's text, so the value is not used by any check." },
-  not_checked: { text: "not machine-checked", cls: "bg-unknown-bg text-unknown-fg", title: "Images and scans have no text layer to check the quote against. Compare it with the image yourself." },
+  not_checked: { text: "photo: compare it yourself", cls: "bg-unknown-bg text-unknown-fg", title: "Images and scans have no text layer to check the quote against. Compare it with the image yourself." },
 };
 
 function GroundingTag({ g }: { g: GroundingResult }) {
   const t = GROUNDING_TEXT[g];
   return (
-    <span title={t.title} className={`ml-1.5 inline-block whitespace-nowrap rounded-full px-1.5 py-px text-[10px] font-semibold not-italic ${t.cls}`}>
+    <span title={t.title} className={`ml-1.5 inline-block whitespace-nowrap rounded-full px-1.5 py-px text-xs font-semibold not-italic ${t.cls}`}>
       {t.text}
     </span>
   );
@@ -56,14 +56,16 @@ function ExtractedFields({ caseId, doc, canReread }: { caseId: string; doc: Case
         <div className="flex flex-col items-end gap-1 text-xs">
           {ex ? (
             ex.mode === "demo-fixture" ? (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">Demo fixture · not a live AI call</span>
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">Sample values · no AI used</span>
             ) : (
-              <span className="rounded-full bg-brand-100 px-2 py-0.5 font-medium text-brand-700">Read by {ex.model} · live</span>
+              <span className="rounded-full bg-brand-100 px-2 py-0.5 font-medium text-brand-700">
+                Read by AI<span className="tech-detail"> · {ex.model}</span>
+              </span>
             )
           ) : (
             <span className="font-medium text-conflict-fg">{EXTRACTION_STATUS_LABEL[doc.extractionStatus]}</span>
           )}
-          {canReread && <ReprocessButton caseId={caseId} docId={doc.id} label={ex?.mode === "vertex-gemini" ? "Re-read with Gemini" : "Read with Gemini"} />}
+          {canReread && <ReprocessButton caseId={caseId} docId={doc.id} label={ex?.mode === "vertex-gemini" ? "Read again" : "Read with AI"} />}
         </div>
       </header>
       {doc.extractionError && <p className="border-b border-line bg-conflict-bg/40 px-5 py-2 text-xs text-conflict-fg">{doc.extractionError}</p>}
@@ -72,11 +74,11 @@ function ExtractedFields({ caseId, doc, canReread }: { caseId: string; doc: Case
           <table className="w-full text-left text-sm">
             <thead className="bg-canvas text-xs text-muted">
               <tr>
-                <th className="px-5 py-2 font-medium">Field</th>
+                <th className="px-5 py-2 font-medium">What</th>
                 <th className="px-3 py-2 font-medium">Value</th>
-                <th className="px-3 py-2 font-medium">Source · supporting quote</th>
-                <th className="px-3 py-2 font-medium">Confidence{ex.mode === "demo-fixture" ? " (illustrative)" : " (self-reported)"}</th>
-                <th className="px-3 py-2 font-medium">Used by checks</th>
+                <th className="px-3 py-2 font-medium">Where it says so</th>
+                <th className="tech-detail px-3 py-2 font-medium">AI confidence{ex.mode === "demo-fixture" ? " (illustrative)" : " (self-reported)"}</th>
+                <th className="px-3 py-2 font-medium">Used in the checks</th>
               </tr>
             </thead>
             <tbody>
@@ -89,21 +91,21 @@ function ExtractedFields({ caseId, doc, canReread }: { caseId: string; doc: Case
                     <td className="px-3 py-2 font-mono text-[13px]">{show(n, f)}</td>
                     <td className="px-3 py-2 text-xs">
                       <Link href={href!} className="link mr-1 font-medium">
-                        p.{f.page ?? "?"}
+                        Page {f.page ?? "?"}
                       </Link>
                       {f.quote ? <q className="italic text-muted">{f.quote}</q> : <span className="text-conflict-fg">No quote</span>}
                       {f.grounded ? <GroundingTag g={f.grounded} /> : null}
                       {f.secondRead ? (
                         <span
-                          title="A second, independent OCR engine (PaddleOCR) read the same document."
-                          className={`ml-1.5 inline-block whitespace-nowrap rounded-full px-1.5 py-px text-[10px] font-semibold not-italic ${f.secondRead.result === "agree" ? "bg-verified-bg text-verified-fg" : f.secondRead.result === "disagree" ? "bg-conflict-bg text-conflict-fg" : "bg-unknown-bg text-unknown-fg"}`}
+                          title="A second, independent reading of the same document (PaddleOCR)."
+                          className={`ml-1.5 inline-block whitespace-nowrap rounded-full px-1.5 py-px text-xs font-semibold not-italic ${f.secondRead.result === "agree" ? "bg-verified-bg text-verified-fg" : f.secondRead.result === "disagree" ? "bg-conflict-bg text-conflict-fg" : "bg-unknown-bg text-unknown-fg"}`}
                         >
-                          {f.secondRead.result === "agree" ? "PaddleOCR agrees" : f.secondRead.result === "disagree" ? `PaddleOCR read “${f.secondRead.text}”` : "PaddleOCR: not found"}
+                          {f.secondRead.result === "agree" ? "second reading agrees" : f.secondRead.result === "disagree" ? `second reading saw “${f.secondRead.text}”` : "second reading: not found"}
                         </span>
                       ) : null}
                       {f.tamperIndicator ? <div className="mt-1 rounded bg-conflict-bg px-2 py-1 not-italic text-conflict-fg">Possible edit: {f.tamperIndicator}</div> : null}
                     </td>
-                    <td className="px-3 py-2 tabular-nums">{f.confidence !== null ? f.confidence.toFixed(2) : "—"}</td>
+                    <td className="tech-detail px-3 py-2 tabular-nums">{f.confidence !== null ? `${Math.round(f.confidence * 100)}%` : "—"}</td>
                     <td className="px-3 py-2 text-xs">{f.supported ? <span className="text-verified-fg">Yes</span> : <span className="text-conflict-fg">No — {f.unsupportedReason}</span>}</td>
                   </tr>
                 );
@@ -112,10 +114,10 @@ function ExtractedFields({ caseId, doc, canReread }: { caseId: string; doc: Case
           </table>
           {missing.length > 0 && (
             <p className="border-t border-line px-5 py-2 text-xs text-muted">
-              Not present in this document (recorded as unknown, never guessed): {missing.map((n) => FIELD_LABEL[n]).join(", ")}.
+              Not in this document (left as unknown, never guessed): {missing.map((n) => FIELD_LABEL[n]).join(", ")}.
             </p>
           )}
-          {ex.warnings.length > 0 && <p className="border-t border-line px-5 py-2 text-xs text-conflict-fg">Validation warnings: {ex.warnings.join("; ")}</p>}
+          {ex.warnings.length > 0 && <p className="border-t border-line px-5 py-2 text-xs text-conflict-fg">Reading notes: {ex.warnings.join("; ")}</p>}
         </div>
       )}
     </article>
@@ -143,7 +145,8 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
         <section className="mb-10">
           <h2 className="mb-1 text-lg font-semibold">Seller claims</h2>
           <p className="mb-4 text-sm text-muted">
-            Each claim gets one status from the evidence below (claim assessor {run?.assessorVersion ?? "—"}). Gemini reads the documents; it never sets a status.
+            Each claim gets one status from the evidence below. AI reads the documents; it never sets a status.
+            <span className="tech-detail"> Claim assessor {run?.assessorVersion ?? "—"}.</span>
           </p>
           <div className="grid gap-4">
             {claims.map((f) => (
@@ -154,9 +157,10 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
       )}
 
       <section className="mb-10">
-        <h2 className="mb-1 text-lg font-semibold">1 · Extracted information</h2>
+        <h2 className="mb-1 text-lg font-semibold">1 · What was read from each document</h2>
         <p className="mb-4 text-sm text-muted">
-          What was read from each document, with the page and quote behind every value. Values without a quote or below the {cfg.minConfidence} confidence threshold are not used by the checks.
+          Every value, with the page and words it came from. Values the AI could not point to in the document, or was unsure about, are left out of the checks.
+          <span className="tech-detail"> Confidence threshold: {cfg.minConfidence}.</span>
         </p>
         <div className="grid gap-4">
           {c.documents.length === 0 ? <p className="text-sm text-muted">No documents yet.</p> : null}
@@ -167,9 +171,13 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
       </section>
 
       <section className="mb-10">
-        <h2 className="mb-1 text-lg font-semibold">2 · Rule checks</h2>
+        <h2 className="mb-1 text-lg font-semibold">2 · Checks</h2>
         <p className="mb-4 text-sm text-muted">
-          Statuses are set by deterministic rules (version {run?.rulesVersion ?? "—"}, last run {run ? new Date(run.at).toLocaleString("en-GB") : "—"}), never by the AI model.
+          Statuses are set by fixed rules that compare the documents, never by the AI.
+          <span className="tech-detail">
+            {" "}
+            Rules version {run?.rulesVersion ?? "—"}, last run {run ? <DateTime iso={run.at} /> : "—"}.
+          </span>
         </p>
         <div className="mb-4">
           <StatusLegend />
@@ -185,7 +193,7 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
       </section>
 
       <section>
-        <h2 className="mb-1 text-lg font-semibold">3 · Document integrity and authenticity</h2>
+        <h2 className="mb-1 text-lg font-semibold">3 · Are the documents genuine?</h2>
         <p className="mb-4 text-sm text-muted">Three different questions. A clean answer to the first two does not answer the third.</p>
         <div className="grid gap-4">
           <div className="card p-5">
@@ -201,17 +209,17 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
           </div>
 
           <div className="card p-5">
-            <div className="label">B · Possible signs of alteration (basic file checks)</div>
+            <div className="label">B · Signs a file was changed (basic file checks)</div>
             <p className="mt-1 text-sm">
               Checks file type against extension, editing-software markers and PDF revision history. Findings are <strong>potential indicators only</strong>. These checks cannot
-              detect a well-made forgery, and harmless re-saving can trigger them. The SHA-256 fingerprint proves only that the file has not changed since upload.
+              detect a well-made forgery, and harmless re-saving can trigger them. The file fingerprint proves only that the file has not changed since it was uploaded.
             </p>
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="text-xs text-muted">
                   <tr className="border-b border-line">
                     <th className="py-1.5 pr-3 font-medium">Document</th>
-                    <th className="py-1.5 pr-3 font-medium">SHA-256 (at upload)</th>
+                    <th className="tech-detail py-1.5 pr-3 font-medium">SHA-256 (at upload)</th>
                     <th className="py-1.5 pr-3 font-medium">Result</th>
                   </tr>
                 </thead>
@@ -222,7 +230,7 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
                     return (
                       <tr key={d.id} className="border-b border-line/70 align-top last:border-0">
                         <td className="py-2 pr-3 break-all">{d.filename}</td>
-                        <td className="py-2 pr-3 font-mono text-xs text-muted" title={d.integrity.sha256}>
+                        <td className="tech-detail py-2 pr-3 font-mono text-xs text-muted" title={d.integrity.sha256}>
                           {d.integrity.sha256.slice(0, 16)}…
                         </td>
                         <td className="py-2 pr-3 text-xs">
@@ -256,7 +264,7 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
 
           <div className="card border-conflict-dot/30 p-5" id="authenticity">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="label">C · Authenticity verification</div>
+              <div className="label">C · Confirmed with the issuer</div>
               {authenticity ? <StatusBadge status={authenticity.status} /> : null}
             </div>
             <p className="mt-2 text-base font-semibold">{authenticity?.title ?? "Authenticity not verified"}</p>
@@ -274,7 +282,7 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
               ))}
             </ul>
             <p className="mt-3 text-xs text-muted">{AUTHENTICITY_STATEMENT}</p>
-            <p className="mt-1 text-xs text-muted">Issuer verification (for example, confirming a battery report with its test provider) is a planned integration and is not available yet.</p>
+            <p className="mt-1 text-xs text-muted">To confirm a document with its issuer (for example, a battery report with its test provider), open the document and record it under “Check with the issuer”.</p>
           </div>
         </div>
       </section>

@@ -36,7 +36,7 @@ export function claimQuestions(claims: Finding[]) {
 
 export const AUTHENTICITY_STATEMENT =
   "Authenticity not verified. VoltProof has not confirmed any document with its issuer or with an authoritative registry. " +
-  "Matching values, successful AI extraction, clean file checks and SHA-256 fingerprints show only that the documents agree with each other " +
+  "Matching values, successful AI reading, clean file checks and file fingerprints show only that the documents agree with each other " +
   "and that files have not changed since upload. They do not prove that any document is genuine. This report is an evidence summary, " +
   "not a vehicle valuation, a battery certification or a fraud determination.";
 

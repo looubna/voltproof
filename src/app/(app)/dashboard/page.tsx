@@ -1,27 +1,46 @@
 import Link from "next/link";
-import { EmptyState, PageTitle, StatusBadge, SyntheticBadge, fmtDate } from "@/components/ui";
+import { cookies } from "next/headers";
+import { DashboardFilters, WelcomePanel } from "@/components/dashboard-client";
+import { DateTime, EmptyState, PageTitle, StatusBadge, StatusKey, SyntheticBadge } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import { listCases } from "@/lib/cases";
-import { STAGE_LABEL, caseSummary, currentFindings } from "@/lib/derive";
+import { dashboardRows, filterDashboard, parseDashboardQuery, type Show } from "@/lib/dashboard";
+import { STAGE_LABEL, currentFindings } from "@/lib/derive";
+import { WELCOME_COOKIE } from "@/lib/preferences";
 import type { Status } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-function Stat({ label, value, hint, tone }: { label: string; value: number; hint: string; tone?: "conflict" | "unknown" }) {
+// The demo case the getting-started guide opens: the landing page's sample report, made real.
+const DEMO_CASE_ID = "demo-hero-id3";
+
+/** A number card that opens the matching list. */
+function Stat({ label, value, hint, href, current, tone }: { label: string; value: number; hint: string; href: string; current: boolean; tone?: "conflict" }) {
   return (
-    <div className="card p-5">
-      <div className="label">{label}</div>
-      <div className={`mt-1 text-3xl font-semibold tabular-nums ${tone === "conflict" && value ? "text-conflict-fg" : "text-ink"}`}>{value}</div>
-      <div className="mt-1 text-xs text-muted">{hint}</div>
-    </div>
+    <Link
+      href={href}
+      aria-current={current ? "page" : undefined}
+      className={`card block p-5 transition-colors hover:border-brand-500 hover:bg-brand-50/50 ${current ? "border-brand-600 ring-1 ring-brand-600" : ""}`}
+    >
+      <span className="label block">{label}</span>
+      <span className={`mt-1 block text-3xl font-semibold tabular-nums ${tone === "conflict" && value ? "text-conflict-fg" : "text-ink"}`}>{value}</span>
+      <span className="mt-1 block text-xs text-muted">{hint}</span>
+      <span className="mt-2 block text-sm font-medium text-brand-600">{current ? "Showing below" : "Show these cases →"}</span>
+    </Link>
   );
 }
 
-export default async function Dashboard() {
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+export default async function Dashboard({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   await requireUser();
-  let cases;
+  const sp = await searchParams;
+  const query = parseDashboardQuery(sp);
+  const showArchived = sp.archived === "1";
+  const welcome = (await cookies()).get(WELCOME_COOKIE)?.value !== "hidden";
+  let all;
   try {
-    cases = await listCases();
+    all = await listCases({ includeArchived: true });
   } catch (e) {
     console.error(e);
     return (
@@ -30,17 +49,22 @@ export default async function Dashboard() {
       </EmptyState>
     );
   }
-  const rows = cases.map((c) => ({ c, s: caseSummary(c), findings: currentFindings(c) }));
+  const archivedCount = all.filter((c) => c.archivedAt).length;
+  const activeRows = dashboardRows(all.filter((c) => !c.archivedAt));
+  const listed = showArchived ? dashboardRows(all.filter((c) => c.archivedAt)) : activeRows;
+  const rows = filterDashboard(listed, query);
   const totals = {
-    awaiting: rows.filter((r) => r.s.stage === "awaiting_review").length,
-    conflicts: rows.reduce((a, r) => a + r.s.openConflicts, 0),
-    missing: rows.reduce((a, r) => a + r.s.missingEvidence, 0),
+    awaiting: activeRows.filter((r) => r.summary.stage === "awaiting_review").length,
+    conflicts: activeRows.reduce((a, r) => a + r.summary.openConflicts, 0),
+    missing: activeRows.reduce((a, r) => a + r.summary.missingEvidence, 0),
   };
+  const statHref = (show: Show) => (show === "all" ? "/dashboard" : `/dashboard?show=${show}`);
+  const isCurrent = (show: Show) => !showArchived && !query.q && query.show === show;
 
   return (
     <>
       <PageTitle
-        eyebrow="Dealer purchase evidence review"
+        eyebrow="Used EV purchase review"
         title="Dashboard"
         actions={
           <Link href="/cases/new" className="btn btn-primary">
@@ -51,79 +75,100 @@ export default async function Dashboard() {
         Know what is verified, what is only claimed, and what is missing before you make an offer on a used EV.
       </PageTitle>
 
-      <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Total cases" value={cases.length} hint="Including synthetic demo cases" />
-        <Stat label="Awaiting review" value={totals.awaiting} hint="Cases with open items for a person" />
-        <Stat label="Open conflicts" value={totals.conflicts} hint="Sources disagree or a check failed" tone="conflict" />
-        <Stat label="Missing evidence" value={totals.missing} hint="Unknowns that could affect the decision" />
+      {welcome && <WelcomePanel demoCaseId={DEMO_CASE_ID} />}
+
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat label="All cases" value={activeRows.length} hint={`Including the demo cases${archivedCount ? `; ${archivedCount} archived not counted` : ""}`} href={statHref("all")} current={isCurrent("all")} />
+        <Stat label="Need review" value={totals.awaiting} hint="Cases with open items for a person" href={statHref("awaiting_review")} current={isCurrent("awaiting_review")} />
+        <Stat label="Open conflicts" value={totals.conflicts} hint="Sources disagree or a check failed" href={statHref("conflicts")} current={isCurrent("conflicts")} tone="conflict" />
+        <Stat label="Missing evidence" value={totals.missing} hint="Gaps that could change the decision" href={statHref("missing")} current={isCurrent("missing")} />
       </div>
 
-      <section className="card overflow-hidden">
-        <div className="flex items-center justify-between border-b border-line px-5 py-3">
-          <h2 className="font-semibold">Cases</h2>
-          <span className="text-xs text-muted">Newest first</span>
+      <section aria-labelledby="cases-title" className="card overflow-hidden">
+        <div className="grid gap-4 border-b border-line px-5 py-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 id="cases-title" className="font-semibold">
+              {showArchived ? "Archived cases" : "Cases"}
+            </h2>
+            <span className="flex items-center gap-3 text-sm text-muted">
+              <span aria-live="polite">{rows.length === listed.length ? plural(listed.length, "case") : `${rows.length} of ${plural(listed.length, "case")}`}</span>
+              {showArchived ? (
+                <Link href="/dashboard" className="link">
+                  Back to active cases
+                </Link>
+              ) : archivedCount ? (
+                <Link href="/dashboard?archived=1" className="link">
+                  Show archived ({archivedCount})
+                </Link>
+              ) : null}
+            </span>
+          </div>
+          <DashboardFilters query={query} showArchived={showArchived} />
         </div>
+
         {rows.length === 0 ? (
           <div className="p-5">
-            <EmptyState title="No cases yet">Create a case to start reviewing documents.</EmptyState>
+            {listed.length ? (
+              <EmptyState title="No cases match">
+                <Link href={showArchived ? "/dashboard?archived=1" : "/dashboard"} className="link">
+                  Clear the search and filters
+                </Link>
+              </EmptyState>
+            ) : showArchived ? (
+              <EmptyState title="No archived cases" />
+            ) : (
+              <EmptyState title="No cases yet">Create a case to start reviewing documents.</EmptyState>
+            )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-canvas text-xs text-muted">
-                <tr>
-                  <th className="px-5 py-2 font-medium">Case</th>
-                  <th className="px-3 py-2 font-medium">Vehicle</th>
-                  <th className="px-3 py-2 font-medium">Documents</th>
-                  <th className="px-3 py-2 font-medium">Findings</th>
-                  <th className="px-3 py-2 font-medium">Stage</th>
-                  <th className="px-3 py-2 font-medium">Opened</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(({ c, s, findings }) => {
-                  const counts = (["conflict", "unknown", "consistent", "verified"] as Status[])
-                    .map((st) => ({ st, n: findings.filter((f) => f.status === st && f.id !== "authenticity").length }))
-                    .filter((x) => x.n);
-                  return (
-                    <tr key={c.id} className="border-t border-line hover:bg-brand-50/60">
-                      <td className="px-5 py-3">
-                        <Link href={`/cases/${c.id}`} className="link font-medium">
-                          {c.caseNumber}
-                        </Link>
-                        {c.synthetic ? <div className="mt-1"><SyntheticBadge /></div> : null}
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="font-medium">
-                          {c.vehicle.year} {c.vehicle.make} {c.vehicle.model}
-                        </div>
-                        <div className="font-mono text-xs text-muted">{c.vehicle.vin || "VIN not entered"}</div>
-                      </td>
-                      <td className="px-3 py-3 tabular-nums">{c.documents.length}</td>
-                      <td className="px-3 py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {counts.map(({ st, n }) => (
-                            <StatusBadge key={st} status={st} detail={String(n)} size="sm" />
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3">
-                        <span className={s.stage === "awaiting_review" ? "font-medium text-conflict-fg" : "text-muted"}>{STAGE_LABEL[s.stage]}</span>
-                        {s.openReviewItems ? <div className="text-xs text-muted">{s.openReviewItems} open item{s.openReviewItems === 1 ? "" : "s"}</div> : null}
-                      </td>
-                      <td className="px-3 py-3 whitespace-nowrap text-muted">{fmtDate(c.createdAt)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <ul className="divide-y divide-line">
+            {rows.map(({ c, summary: s, vehicle, sameVin }) => {
+              const findings = currentFindings(c);
+              const counts = (["conflict", "unknown", "consistent", "verified"] as Status[])
+                .map((st) => ({ st, n: findings.filter((f) => f.status === st && f.id !== "authenticity").length }))
+                .filter((x) => x.n);
+              return (
+                <li key={c.id}>
+                  {/* The whole row is one link: one tab stop, and its text describes the case. */}
+                  <Link href={`/cases/${c.id}`} className="group grid gap-x-6 gap-y-2 px-5 py-4 hover:bg-brand-50/60 md:grid-cols-[minmax(0,1fr)_minmax(0,14rem)_10rem]">
+                    <div className="min-w-0">
+                      <p className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-ink group-hover:underline">{vehicle || "Vehicle not entered"}</span>
+                        {c.synthetic ? <SyntheticBadge /> : null}
+                      </p>
+                      <p className="mt-0.5 text-sm text-muted">
+                        {c.caseNumber}
+                        {c.reference ? <span className="font-medium text-ink"> · {c.reference}</span> : null} · {plural(c.documents.length, "document")}
+                      </p>
+                      <p className="mt-0.5 break-all text-xs text-muted">
+                        VIN <span className="font-mono">{c.vehicle.vin || "not entered"}</span>
+                        {sameVin ? <span className="font-medium text-conflict-fg"> · same VIN as {plural(sameVin, "other case")}</span> : null}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap content-start gap-1">
+                      {counts.map(({ st, n }) => (
+                        <StatusBadge key={st} status={st} detail={String(n)} size="sm" />
+                      ))}
+                    </div>
+                    <div className="text-sm md:text-right">
+                      <span className={s.stage === "awaiting_review" ? "font-semibold text-conflict-fg" : "text-muted"}>{STAGE_LABEL[s.stage]}</span>
+                      {s.openReviewItems ? <span className="block text-xs text-muted">{plural(s.openReviewItems, "open item")}</span> : null}
+                      <span className="block whitespace-nowrap text-xs text-muted">
+                        Opened <DateTime iso={c.createdAt} dateOnly />
+                      </span>
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
 
+      <StatusKey className="mt-6" />
+
       <p className="mt-6 text-xs text-muted">
-        VoltProof is an evidence-review tool. It does not value vehicles, test batteries, certify documents or detect fraud automatically.
-        Findings marked Conflict need a person to review them.
+        VoltProof is an evidence-review tool. It does not value vehicles, test batteries, certify documents or detect fraud automatically. Findings marked Conflict need a person to review them.
       </p>
     </>
   );

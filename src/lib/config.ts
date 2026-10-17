@@ -35,3 +35,12 @@ export function getConfig() {
 }
 
 export type AppConfig = ReturnType<typeof getConfig>;
+
+/**
+ * How long reading one document usually takes, for the upload progress message:
+ * about a minute with live Gemini plus the second OCR read (measured 62–66 s in QA),
+ * a few seconds for the built-in demo samples.
+ */
+export function typicalReadSeconds(cfg: AppConfig = getConfig()) {
+  return cfg.aiMode === "vertex" ? 60 : 5;
+}

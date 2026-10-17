@@ -1,22 +1,16 @@
 // Public landing page (from the VoltProof landing page design). The waitlist and
 // demo forms post to /api/leads; "See the live demo" opens the signed-in app.
-import { LogoMark } from "@/components/logo";
 import Link from "next/link";
+import { Logo, LogoMark } from "@/components/logo";
 import { DemoRequestForm, WaitlistForm } from "@/components/client";
 import { StatusBadge } from "@/components/ui";
 import type { Status } from "@/lib/types";
 
+// Rendered per request so its inline scripts carry the Content-Security-Policy nonce (see src/middleware.ts).
+export const dynamic = "force-dynamic";
+
 const NAVY = "bg-[#0f1c2b]";
 const PAPER = "bg-[#f3f1ec]";
-
-function Logo({ light = true }: { light?: boolean }) {
-  return (
-    <span className={`flex items-center gap-2 text-lg font-semibold tracking-tight ${light ? "text-white" : "text-[#0f1c2b]"}`}>
-      <LogoMark />
-      VoltProof
-    </span>
-  );
-}
 
 const SAMPLE: { label: string; status: Status; note: string }[] = [
   { label: "Battery health: 92% claimed", status: "verified", note: "Matches a diagnostic readout from the last 30 days." },
@@ -47,7 +41,7 @@ export default function Landing() {
       {/* Hero */}
       <section className={`${NAVY} text-white`}>
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-          <Logo />
+          <Logo height={32} priority />
           <nav className="hidden gap-6 text-sm text-white/75 md:flex">
             <a href="#how" className="hover:text-white">How it works</a>
             <a href="#statuses" className="hover:text-white">Evidence statuses</a>
@@ -249,6 +243,7 @@ export default function Landing() {
       <footer className={`${NAVY} text-white`}>
         <div className="mx-auto grid max-w-6xl gap-10 border-b border-white/10 px-6 py-16 lg:grid-cols-2">
           <div>
+            <LogoMark size={56} className="mb-4" />
             <h2 className="text-3xl font-bold">Be among the first to use VoltProof.</h2>
             <p className="mt-3 text-white/70">Join the waitlist and we'll let you know the moment your early access is ready.</p>
           </div>
@@ -256,8 +251,8 @@ export default function Landing() {
         </div>
         <div className="mx-auto flex max-w-6xl flex-wrap items-start justify-between gap-6 px-6 py-10 text-sm text-white/70">
           <div>
-            <Logo />
-            <p className="mt-2 max-w-xs">Evidence intelligence for used-EV transactions and financing risk.</p>
+            <Logo height={30} />
+            <p className="mt-3 max-w-xs">Evidence intelligence for used-EV transactions and financing risk.</p>
           </div>
           <div className="flex gap-12">
             <div className="grid gap-2">

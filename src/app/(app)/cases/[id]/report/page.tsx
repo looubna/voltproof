@@ -1,6 +1,7 @@
 import { PrintButton } from "@/components/client";
 import { CaseHeader, loadCase } from "@/components/case-header";
-import { EvidenceTable, StatusBadge, fmtDateTime } from "@/components/ui";
+import { LogoMark } from "@/components/logo";
+import { EvidenceTable, StatusBadge, DateTime } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import { STATUS_LABEL, STATUS_MEANING } from "@/lib/labels";
 import { buildReport } from "@/lib/report";
@@ -36,12 +37,16 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       <article className="card mx-auto max-w-4xl p-6 sm:p-10 print:max-w-none print:border-0 print:p-0">
         <header className="flex flex-wrap items-start justify-between gap-4 border-b-2 border-navy-900 pb-4">
           <div>
-            <div className="label">VoltProof · Evidence review report</div>
+            <div className="label flex items-center gap-2">
+              {/* Loaded eagerly so it is in place when the report is printed or saved as PDF. */}
+              <LogoMark size={20} priority />
+              VoltProof · Evidence review report
+            </div>
             <h1 className="mt-1 text-2xl font-semibold">
               {r.vehicle.year} {r.vehicle.make} {r.vehicle.model}
             </h1>
             <p className="text-sm text-muted">
-              Case {r.case.caseNumber} · generated {fmtDateTime(r.generatedAt)} by {r.generatedBy}
+              Case {r.case.caseNumber} · generated <DateTime iso={r.generatedAt} /> by {r.generatedBy}
             </p>
           </div>
           {r.synthetic && <span className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900">SYNTHETIC DATA — FICTIONAL DEMONSTRATION CASE</span>}
@@ -99,12 +104,20 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           <dd className="font-mono">{r.vehicle.vin || "—"}</dd>
           <dt className="text-muted">Case opened</dt>
           <dd>
-            {fmtDateTime(r.case.createdAt)} by {r.case.createdBy}
+            <DateTime iso={r.case.createdAt} /> by {r.case.createdBy}
           </dd>
           <dt className="text-muted">Extraction</dt>
           <dd>{modeText}</dd>
           <dt className="text-muted">Rules</dt>
-          <dd>{r.rules ? `Rules ${r.rules.version}, claim assessor ${r.rules.assessorVersion}, run ${fmtDateTime(r.rules.ranAt)}` : "—"}</dd>
+          <dd>
+            {r.rules ? (
+              <>
+                Rules {r.rules.version}, claim assessor {r.rules.assessorVersion}, run <DateTime iso={r.rules.ranAt} />
+              </>
+            ) : (
+              "—"
+            )}
+          </dd>
         </dl>
 
         <H n={2}>Summary of statuses</H>
@@ -115,7 +128,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                 <StatusBadge status={s} size="sm" />
                 <span className="text-xl font-semibold tabular-nums">{r.statusCounts[s]}</span>
               </div>
-              <p className="mt-1 text-[11px] leading-snug text-muted">{STATUS_MEANING[s]}</p>
+              <p className="mt-1 text-xs leading-snug text-muted">{STATUS_MEANING[s]}</p>
             </div>
           ))}
         </div>
@@ -163,7 +176,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               </div>
               {ch.humanReview && (
                 <p className="mt-2 rounded bg-canvas px-2 py-1 text-xs">
-                  <strong>Human review:</strong> {ch.humanReview.resolution} by {ch.humanReview.reviewer}, {fmtDateTime(ch.humanReview.at)} — “{ch.humanReview.note}”
+                  <strong>Human review:</strong> {ch.humanReview.resolution} by {ch.humanReview.reviewer}, <DateTime iso={ch.humanReview.at} /> — “{ch.humanReview.note}”
                   {ch.humanReview.stale ? " (evidence changed after this review)" : ""}
                 </p>
               )}
@@ -191,7 +204,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                   <td className="py-1.5 pr-2">{d.type}</td>
                   <td className="py-1.5 pr-2">{d.provenance}</td>
                   <td className="py-1.5 pr-2">
-                    {d.uploadedBy}, {fmtDateTime(d.uploadedAt)}
+                    {d.uploadedBy}, <DateTime iso={d.uploadedAt} />
                   </td>
                   <td className="py-1.5 pr-2">{d.extractionMode === "demo-fixture" ? "Demo fixture" : d.extractionModel ?? d.extractionStatus}</td>
                   <td className="py-1.5 pr-2 font-mono">{d.sha256.slice(0, 12)}…</td>
@@ -212,7 +225,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             {r.reviewerNotes.map((n, i) => (
               <li key={i} className="rounded-lg border border-line p-3">
                 <div className="text-xs text-muted">
-                  {fmtDateTime(n.at)} · {n.reviewer} · {n.finding} (machine status: {STATUS_LABEL[n.machineStatus]})
+                  <DateTime iso={n.at} /> · {n.reviewer} · {n.finding} (machine status: {STATUS_LABEL[n.machineStatus]})
                 </div>
                 <div className="mt-0.5">
                   <strong>{n.resolution}.</strong> {n.note}

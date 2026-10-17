@@ -1,19 +1,26 @@
 import Link from "next/link";
 import { CopyButton, RunAgentButton } from "@/components/client";
-import { fmtDateTime } from "@/components/ui";
+import { DateTime } from "@/components/ui";
+import { currentFindings } from "@/lib/derive";
 import type { Case, CitedText } from "@/lib/types";
 
-const KIND_DOT: Record<string, string> = { check: "bg-consistent-dot", tool_call: "bg-brand-600", decision: "bg-conflict-dot", draft: "bg-verified-dot" };
-
+/** The findings a draft is based on, by their titles (ids are internal), each linking to its evidence. */
 function Cites({ c, ids }: { c: Case; ids: string[] }) {
+  const titles = new Map(currentFindings(c).map((f) => [f.id, f.title]));
+  const unique = Array.from(new Set(ids));
+  if (!unique.length) return null;
   return (
-    <span className="ml-1 text-[11px] text-muted">
-      {ids.map((id, i) => (
-        <Link key={id} href={`/cases/${c.id}/evidence#${id}`} className="link">
+    <span className="ml-1 text-xs text-muted">
+      (see{" "}
+      {unique.map((id, i) => (
+        <span key={id}>
           {i ? ", " : ""}
-          {id.startsWith("claim:") ? "claim" : id}
-        </Link>
+          <Link href={`/cases/${c.id}/evidence#${id}`} className="link">
+            {titles.get(id) ?? "an earlier finding"}
+          </Link>
+        </span>
       ))}
+      )
     </span>
   );
 }
@@ -34,46 +41,56 @@ function CitedList({ c, items }: { c: Case; items: CitedText[] }) {
   );
 }
 
-/** The ADK evidence agent: a reviewer runs it, it investigates and drafts; a person decides and sends. */
+/** The evidence agent (an ADK workflow on Gemini): a reviewer runs it, it investigates and drafts; a person decides and sends. */
 export function AgentCard({ c, configured }: { c: Case; configured: boolean }) {
   const run = c.agentRuns?.at(-1);
+  const edits = run?.forensicReport?.length ?? 0;
   return (
-    <section className="card overflow-hidden">
+    <section aria-labelledby="agent-title" className="card overflow-hidden">
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
-        <div>
-          <h2 className="font-semibold">Evidence agent</h2>
-          <p className="mt-0.5 max-w-xl text-xs text-muted">
-            An ADK workflow on Gemini: runs the registry checks, re-checks documents whose checks did not complete, and drafts questions and issuer requests. It cannot set a status or send anything. You review and send.
+        <div className="max-w-xl">
+          <h2 id="agent-title" className="font-semibold">
+            Evidence agent <span className="font-normal text-muted">(optional)</span>
+          </h2>
+          <p className="mt-0.5 text-sm text-muted">
+            An AI assistant that looks the vehicle up in public registers, re-reads documents that did not finish, and drafts questions for the seller and emails to the companies that issued the documents. It cannot
+            change a status or send anything: you decide what to send.
           </p>
         </div>
         <RunAgentButton caseId={c.id} disabled={!configured} />
       </header>
-      {!configured && <p className="px-5 py-3 text-xs text-muted">Not configured on this server (AGENT_SERVICE_URL).</p>}
+      {!configured && (
+        <p className="px-5 py-3 text-sm text-muted">
+          The evidence agent is not available on this server.<span className="tech-detail"> Set AGENT_SERVICE_URL to connect it.</span>
+        </p>
+      )}
       {run ? (
         <div className="grid gap-4 px-5 py-4">
-          <Link href={`/cases/${c.id}/agent`} className="btn btn-secondary justify-self-start">
-            See exactly what the agent did{run.forensicReport?.length ? ` and the falsification analysis (${run.forensicReport.length} document${run.forensicReport.length === 1 ? "" : "s"})` : ""} →
-          </Link>
           <p className="text-xs text-muted">
-            Last run {fmtDateTime(run.finishedAt)} · {run.model}
-            {run.model === "offline-demo-planner" ? " (offline stand-in, not Gemini)" : ""} · agent {run.agentVersion} · {run.steps.length} steps
-            {run.dropped.length ? ` · ${run.dropped.length} draft(s) removed by validation` : ""}
+            Last run <DateTime iso={run.finishedAt} />
+            <span className="tech-detail">
+              {" "}
+              · {run.model}
+              {run.model === "offline-demo-planner" ? " (offline stand-in, not Gemini)" : ""} · agent {run.agentVersion} · {run.steps.length} steps
+              {run.dropped.length ? ` · ${run.dropped.length} draft(s) removed by validation` : ""}
+            </span>
           </p>
           {run.reviewerSummary.length > 0 && (
             <div>
-              <div className="label mb-1">Summary for you</div>
+              <h3 className="label mb-1">Summary for you</h3>
               <CitedList c={c} items={run.reviewerSummary} />
             </div>
           )}
           {run.sellerQuestions.length > 0 && (
             <div>
-              <div className="label mb-1">Questions for the seller</div>
+              <h3 className="label mb-1">Questions to ask the seller</h3>
               <CitedList c={c} items={run.sellerQuestions} />
             </div>
           )}
           {run.issuerRequests.length > 0 && (
             <div>
-              <div className="label mb-1">Issuer requests (drafts, not sent)</div>
+              <h3 className="label mb-1">Draft emails to document issuers (not sent)</h3>
+              <p className="mb-2 text-xs text-muted">The issuer is the company that produced a document, such as the workshop that wrote an invoice. Find its contact details yourself, not from the document.</p>
               <ul className="grid gap-2">
                 {run.issuerRequests.map((r, i) => (
                   <li key={i} className="rounded-lg border border-line bg-canvas p-3 text-sm">
@@ -91,25 +108,12 @@ export function AgentCard({ c, configured }: { c: Case; configured: boolean }) {
               </ul>
             </div>
           )}
-          <details className="text-sm">
-            <summary className="cursor-pointer text-muted">What the agent did ({run.steps.length} steps)</summary>
-            <ol className="mt-2 grid gap-1.5 border-l-2 border-line pl-3">
-              {run.steps.map((s, i) => (
-                <li key={i} className="text-xs">
-                  <span className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${KIND_DOT[s.kind] ?? "bg-unknown-dot"}`} />
-                  <span className="font-mono text-muted">{s.node}</span> {s.summary}
-                </li>
-              ))}
-            </ol>
-            {run.dropped.length > 0 && (
-              <div className="mt-2 text-xs text-muted">
-                Removed by validation: {run.dropped.join(" · ")}
-              </div>
-            )}
-          </details>
+          <Link href={`/cases/${c.id}/agent`} className="btn btn-secondary justify-self-start">
+            See every step the agent took{edits ? ` and its analysis of ${edits} possibly edited document${edits === 1 ? "" : "s"}` : ""} →
+          </Link>
         </div>
       ) : (
-        configured && <p className="px-5 py-4 text-sm text-muted">Not run yet on this case.</p>
+        configured && <p className="px-5 py-4 text-sm text-muted">Not run on this case yet. It usually takes under a minute.</p>
       )}
     </section>
   );

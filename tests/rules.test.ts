@@ -6,11 +6,14 @@ import {
   currentOdometer,
   dateConsistency,
   extractionFindings,
+  integrityFindings,
   mileageTimeline,
+  ruleCheckTitles,
   runRules,
   vehicleConsistency,
   vinConsistency,
 } from "@/lib/rules";
+import { vinFormatProblem } from "@/lib/normalize";
 import { makeDoc, REF, vehicle, VIN_A, VIN_B } from "./helpers";
 
 const input = (documents: ReturnType<typeof makeDoc>[], v = vehicle) => ({ vehicle: v, documents, referenceDate: REF });
@@ -31,9 +34,14 @@ describe("VIN consistency", () => {
   it("treats missing VINs as unknown, not conflict", () => {
     expect(vinConsistency(input([makeDoc("a", { make: "Tesla" })])).status).toBe("unknown");
   });
-  it("ignores battery reports (checked by their own rule)", () => {
+  it("counts the VIN on a battery report like any other document VIN", () => {
     const f = vinConsistency(input([makeDoc("reg", { vin: VIN_A }), makeDoc("bat", { documentType: "battery_report", vin: VIN_B })]));
+    expect(f.status).toBe("conflict");
+  });
+  it("does not claim no document has a VIN when only the battery report shows one", () => {
+    const f = vinConsistency(input([makeDoc("bat", { documentType: "battery_report", vin: VIN_A })]));
     expect(f.status).toBe("consistent");
+    expect(f.result).not.toMatch(/No document provides/);
   });
 });
 
@@ -228,5 +236,45 @@ describe("registration number", () => {
     expect(registrationConsistency({ vehicle, documents: [a, b], referenceDate: REF }).status).toBe("consistent");
     expect(registrationConsistency({ vehicle, documents: [a, b, c], referenceDate: REF }).status).toBe("conflict");
     expect(registrationConsistency({ vehicle, documents: [], referenceDate: REF }).status).toBe("unknown");
+  });
+});
+
+describe("integrity findings", () => {
+  const flagged = (fields: ("vin" | "odometer")[]) => {
+    const d = makeDoc("inv", { vin: VIN_A, odometer: { reading: 30000, unit: "km" } });
+    d.forensics = {
+      checkedAt: REF,
+      methods: ["pdf_text_layer"],
+      signatures: [],
+      indicators: fields.map((field) => ({ code: "text_overlaps_text", severity: "potential" as const, method: "pdf_text_layer" as const, message: "Text written over other text.", field })),
+    };
+    return integrityFindings({ vehicle, documents: [d], referenceDate: REF })[0];
+  };
+  it("names edited fields with their proper labels", () => {
+    expect(flagged(["vin", "odometer"]).title).toBe("Possible edit to the VIN and odometer");
+  });
+  it("treats a possible edit to a specific value as a conflict, whichever field it is", () => {
+    expect(flagged(["vin"]).status).toBe("conflict");
+    expect(flagged(["odometer"]).status).toBe("conflict");
+  });
+});
+
+describe("documented rule checks", () => {
+  it("lists every cross-document check by title", () => {
+    const titles = ruleCheckTitles();
+    expect(titles).toContain("VIN consistency");
+    expect(titles).toContain("Battery report age");
+    expect(titles).not.toContain("Authenticity not verified");
+    expect(new Set(titles).size).toBe(titles.length);
+  });
+});
+
+describe("VIN format", () => {
+  it("explains what is wrong with a VIN typed into a case", () => {
+    expect(vinFormatProblem("")).toBeNull();
+    expect(vinFormatProblem(VIN_A)).toBeNull();
+    expect(vinFormatProblem("5yj3-e1ea0mf934821")).toBeNull();
+    expect(vinFormatProblem("IOQ123")).toMatch(/I, O or Q/);
+    expect(vinFormatProblem("5YJ3E1EA0MF93482")).toMatch(/this one has 16/);
   });
 });

@@ -1,8 +1,13 @@
 import Link from "next/link";
+import { DateTime, formatUtc } from "./date-time";
 import type { ReactNode } from "react";
-import { RESOLUTION_LABEL, STATUS_LABEL, STATUS_MEANING } from "@/lib/labels";
+import { RESOLUTION_LABEL, STATUS_LABEL, STATUS_MEANING, STATUS_SHORT } from "@/lib/labels";
 import type { ReviewState } from "@/lib/derive";
 import type { EvidenceRef, Finding, Status } from "@/lib/types";
+
+export { DateTime };
+
+const STATUSES: Status[] = ["verified", "consistent", "conflict", "unknown"];
 
 const STATUS_CLASS: Record<Status, string> = {
   verified: "bg-verified-bg text-verified-fg",
@@ -21,7 +26,7 @@ export function StatusBadge({ status, detail, size = "md" }: { status: Status; d
   return (
     <span
       title={STATUS_MEANING[status]}
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full font-semibold ${STATUS_CLASS[status]} ${size === "sm" ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs"}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full font-semibold ${STATUS_CLASS[status]} ${size === "sm" ? "px-2 py-0.5 text-xs" : "px-2.5 py-1 text-xs"}`}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${DOT_CLASS[status]}`} aria-hidden />
       {STATUS_LABEL[status]}
@@ -32,22 +37,39 @@ export function StatusBadge({ status, detail, size = "md" }: { status: Status; d
 
 export function SyntheticBadge() {
   return (
-    <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800" title="Fictional demonstration data">
-      Synthetic data
-    </span>
+    <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">Demo data</span>
   );
 }
 
 export function StatusLegend() {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {(["verified", "consistent", "conflict", "unknown"] as Status[]).map((s) => (
+      {STATUSES.map((s) => (
         <div key={s} className="card p-3">
           <StatusBadge status={s} size="sm" />
           <p className="mt-1.5 text-xs leading-relaxed text-muted">{STATUS_MEANING[s]}</p>
         </div>
       ))}
     </div>
+  );
+}
+
+/** The four statuses with a line each, always on screen: a badge's hover title does not show on phones. */
+export function StatusKey({ className = "" }: { className?: string }) {
+  return (
+    <aside aria-label="What the statuses mean" className={`rounded-xl border border-line bg-[#fdfcfa] px-4 py-3 ${className}`}>
+      <p className="label mb-2">What the statuses mean</p>
+      <dl className="grid gap-x-6 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-4">
+        {STATUSES.map((s) => (
+          <div key={s} className="grid content-start gap-1">
+            <dt>
+              <StatusBadge status={s} size="sm" />
+            </dt>
+            <dd className="text-xs text-muted">{STATUS_SHORT[s]}</dd>
+          </div>
+        ))}
+      </dl>
+    </aside>
   );
 }
 
@@ -117,7 +139,7 @@ export function EvidenceTable({ caseId, evidence, compact }: { caseId: string; e
                   <td className="py-2 pr-3 text-xs text-muted">
                     {e.page ? <span className="mr-1 font-medium text-ink">p.{e.page}</span> : null}
                     {e.quote ? <q className="italic">{e.quote}</q> : e.documentId ? "—" : null}
-                    {e.confidence !== null ? <span className="ml-1 whitespace-nowrap">· conf. {e.confidence.toFixed(2)}</span> : null}
+                    {e.confidence !== null ? <span className="tech-detail ml-1 whitespace-nowrap">· AI confidence {Math.round(e.confidence * 100)}%</span> : null}
                   </td>
                 )}
               </tr>
@@ -138,7 +160,9 @@ export function ReviewStamp({ state }: { state: ReviewState }) {
       <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
         <span className="font-semibold text-ink">Human review: {RESOLUTION_LABEL[r.resolution]}</span>
         <span>by {r.reviewer}</span>
-        <span>· {new Date(r.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</span>
+        <span>
+          · <DateTime iso={r.at} />
+        </span>
       </div>
       <p className="mt-1 text-ink">{r.note}</p>
       {state.stale ? <p className="mt-1 text-xs font-medium text-amber-800">The evidence changed after this review, so the item is open again.</p> : null}
@@ -189,10 +213,11 @@ export function FindingCard({ caseId, finding, review, children }: { caseId: str
   );
 }
 
+/** For text-only contexts (titles, exports). Server-rendered, so it states UTC; pages use <DateTime> to show local time. */
 export function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return formatUtc(iso, true);
 }
 
 export function fmtDateTime(iso: string) {
-  return new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+  return formatUtc(iso);
 }

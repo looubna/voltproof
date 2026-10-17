@@ -294,7 +294,10 @@ export interface AuditEvent {
   at: string;
   actor: string;
   type: string;
+  /** What happened, in plain words. */
   detail: string;
+  /** Model names, versions, hashes and timings, shown only with "Technical details" on. Older events have none. */
+  technical?: string;
 }
 
 export interface Vehicle {
@@ -321,6 +324,11 @@ export interface Case {
   ruleRuns: RuleRun[];
   reviews: Review[];
   events: AuditEvent[];
+  /** The reviewer's own label, such as a stock number or the seller's name, to tell cases apart. */
+  reference?: string | null;
+  /** Set when a person archived the case. Archived cases keep their audit trail but leave the dashboard and review queue. */
+  archivedAt?: string | null;
+  archivedBy?: string | null;
 }
 
 // ---------------------------------------------------------------- landing page leads

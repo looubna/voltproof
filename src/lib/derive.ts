@@ -48,8 +48,11 @@ export function decisionImpactItems(c: Case) {
 }
 
 export function reviewQueue(c: Case) {
+  // Before any document is uploaded, Unknown only means "nothing uploaded yet": not something for a
+  // person to decide. A Conflict (e.g. a typed VIN that names another maker) still needs review.
+  const noDocuments = c.documents.length === 0;
   return currentFindings(c)
-    .filter((f) => f.requiresReview && (f.status === "conflict" || f.status === "unknown"))
+    .filter((f) => f.requiresReview && (f.status === "conflict" || (f.status === "unknown" && !noDocuments)))
     .map((f) => ({ finding: f, review: reviewState(c, f) }));
 }
 
@@ -61,7 +64,8 @@ export function caseSummary(c: Case) {
   const queue = reviewQueue(c);
   const openQueue = queue.filter((q) => q.review.open);
   const openConflicts = findings.filter((f) => f.status === "conflict" && reviewState(c, f).open).length;
-  const missingEvidence = findings.filter((f) => f.status === "unknown" && f.decisionImpact && reviewState(c, f).open).length;
+  // With no documents everything is missing; the stage ("No documents yet") already says so.
+  const missingEvidence = c.documents.length === 0 ? 0 : findings.filter((f) => f.status === "unknown" && f.decisionImpact && reviewState(c, f).open).length;
   const stage: CaseStage = c.documents.length === 0 ? "no_documents" : processing ? "processing" : openQueue.length ? "awaiting_review" : "review_complete";
   return { stage, openConflicts, missingEvidence, openReviewItems: openQueue.length, totalReviewItems: queue.length };
 }

@@ -10,11 +10,11 @@ import { crossCheck } from "./ocr/crosscheck";
 import { ocrConfigured, runInkMarkCheck, runOcr, type OcrResult } from "./ocr/paddle";
 import { ASSESSOR_VERSION, assessClaims, type ClaimPolicy } from "./claims/assess";
 import { validateStated, CLAIM_TYPES, type ClaimProposal } from "./claims/parse";
-import { CLAIM_TYPE_LABEL, FIELD_LABEL } from "./labels";
+import { CLAIM_TYPE_LABEL, PROVENANCE_LABEL, RESOLUTION_LABEL, STATUS_LABEL, fieldLabelInline, joinList } from "./labels";
 import { decodeVin, VPIC_NAME } from "./registry/nhtsa";
 import { lookupVin11, NZTA_NAME } from "./registry/nzta";
 import { ALLOWED_TYPES, checkIntegrity, detectType } from "./integrity";
-import { normalizeVin } from "./normalize";
+import { normalizeVin, vinFormatProblem } from "./normalize";
 import { RULES_VERSION, runRules } from "./rules";
 import { SAMPLE_CASES, type SampleCase } from "./samples/definitions";
 import { getStore } from "./storage";
@@ -26,14 +26,40 @@ const MAX_RULE_RUNS = 25;
 const MAX_EXTRACTION_HISTORY = 5;
 const PROVENANCES: Provenance[] = ["seller_provided", "dealer_captured", "dealer_ordered", "unknown"];
 
-export class UserError extends Error {}
+/** An error caused by the request, shown to the user as is. */
+export class UserError extends Error {
+  constructor(
+    message: string,
+    readonly status = 400,
+    readonly details?: Record<string, unknown>,
+  ) {
+    super(message);
+  }
+}
 
 function now() {
   return new Date().toISOString();
 }
 
-function event(actor: string, type: string, detail: string, at = now()): AuditEvent {
-  return { at, actor, type, detail };
+/** An audit event: `detail` in plain words; model names, versions and hashes go in `technical`. */
+function event(actor: string, type: string, detail: string, extra: { at?: string; technical?: string } = {}): AuditEvent {
+  return { at: extra.at ?? now(), actor, type, detail, ...(extra.technical ? { technical: extra.technical } : {}) };
+}
+
+const STATUS_COUNT_WORD: Record<string, [string, string]> = {
+  conflict: ["conflict", "conflicts"],
+  unknown: ["unknown", "unknown"],
+  consistent: ["consistent", "consistent"],
+  verified: ["verified", "verified"],
+};
+
+/** "2 conflicts, 1 unknown, 6 consistent", most urgent first. */
+function statusCounts(findings: { status: string }[]) {
+  return Object.keys(STATUS_COUNT_WORD)
+    .map((k) => [k, findings.filter((f) => f.status === k).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} ${STATUS_COUNT_WORD[k][n === 1 ? 0 : 1]}`)
+    .join(", ");
 }
 
 function safeName(name: string) {
@@ -73,8 +99,7 @@ export function evaluateRules(c: Case, trigger: string, actor: string) {
   const findings = [...claimFindings, ...ruleFindings];
   c.ruleRuns.push({ id: randomUUID(), at: now(), rulesVersion: RULES_VERSION, assessorVersion: ASSESSOR_VERSION, trigger, findings });
   if (c.ruleRuns.length > MAX_RULE_RUNS) c.ruleRuns = c.ruleRuns.slice(-MAX_RULE_RUNS);
-  const counts = findings.reduce<Record<string, number>>((a, f) => ((a[f.status] = (a[f.status] ?? 0) + 1), a), {});
-  c.events.push(event(actor, "rules_run", `Rules ${RULES_VERSION} ran (${trigger}): ${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ")}.`));
+  c.events.push(event(actor, "rules_run", `Checks updated (${trigger}): ${statusCounts(findings) || "no findings"}.`, { technical: `Rules ${RULES_VERSION}, claim assessor ${ASSESSOR_VERSION}` }));
 }
 
 // ---------------------------------------------------------------- synthetic cases
@@ -101,7 +126,7 @@ async function buildSampleCase(sc: SampleCase): Promise<Case> {
     })),
     ruleRuns: [],
     reviews: [],
-    events: [event("VoltProof demo seed", "case_created", "Synthetic demonstration case created. All documents and data are fictional.", sc.createdAt)],
+    events: [event("VoltProof demo seed", "case_created", "Demo case created. All documents and data are fictional.", { at: sc.createdAt })],
   };
   for (const sd of sc.docs) {
     const buf = await readSampleFile(sd);
@@ -132,7 +157,7 @@ async function buildSampleCase(sc: SampleCase): Promise<Case> {
       extractionHistory: [],
       forensics,
     });
-    c.events.push(event("VoltProof demo seed", "document_added", `${sd.filename} added; extraction loaded from demo fixture (no live AI call).`, sc.createdAt));
+    c.events.push(event("VoltProof demo seed", "document_added", `${sd.filename} added (sample document; its values come with the demo, not from AI).`, { at: sc.createdAt, technical: "Extraction loaded from a hand-written demo fixture." }));
   }
   evaluateRules(c, "demo seed", "system");
   return c;
@@ -162,17 +187,18 @@ export async function resetSampleCase(id: string, actor: string) {
   const sc = SAMPLE_CASES.find((s) => s.id === id);
   if (!sc) throw new UserError("Only synthetic demonstration cases can be reset.");
   const c = await buildSampleCase(sc);
-  c.events.push(event(actor, "case_reset", "Synthetic case reset to its original state."));
+  c.events.push(event(actor, "case_reset", "Demo case reset to its original state."));
   await getStore().putCase(c);
   return c;
 }
 
 // ---------------------------------------------------------------- queries
 
-export async function listCases() {
+/** Cases, newest first. Archived cases are left out unless asked for. */
+export async function listCases({ includeArchived = false }: { includeArchived?: boolean } = {}) {
   await ensureSeeded();
   const cases = await getStore().listCases();
-  return cases.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return cases.filter((c) => includeArchived || !c.archivedAt).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
 export async function getCase(id: string) {
@@ -180,19 +206,52 @@ export async function getCase(id: string) {
   return getStore().getCase(id);
 }
 
+export interface CaseMatch {
+  id: string;
+  caseNumber: string;
+  vehicle: string;
+  createdAt: string;
+  archived: boolean;
+}
+
+/** Existing cases (archived ones included) recorded for this VIN. */
+export async function findCasesByVin(vin: string): Promise<CaseMatch[]> {
+  const v = normalizeVin(vin);
+  if (!v) return [];
+  return (await listCases({ includeArchived: true }))
+    .filter((c) => normalizeVin(c.vehicle.vin ?? "") === v)
+    .map((c) => ({ id: c.id, caseNumber: c.caseNumber, vehicle: [c.vehicle.year, c.vehicle.make, c.vehicle.model].filter(Boolean).join(" "), createdAt: c.createdAt, archived: !!c.archivedAt }));
+}
+
 // ---------------------------------------------------------------- commands
 
-export async function createCase(input: { make: string; model: string; year: string | number | null; vin: string }, actor: string) {
+const MAX_REFERENCE = 80;
+
+function cleanReference(value: unknown) {
+  const r = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  if (r.length > MAX_REFERENCE) throw new UserError(`The reference is too long (${MAX_REFERENCE} characters max).`);
+  return r || null;
+}
+
+export async function createCase(input: { make: string; model: string; year: string | number | null; vin: string; reference?: string | null; allowDuplicateVin?: boolean }, actor: string) {
   const make = input.make.trim();
   const model = input.model.trim();
+  const reference = cleanReference(input.reference);
   const vin = normalizeVin(input.vin ?? "");
   const year = input.year ? Number(input.year) : null;
   if (!make || !model) throw new UserError("Make and model are required.");
   if (make.length > 60 || model.length > 60) throw new UserError("Make or model is too long.");
-  if (vin && !/^[A-Z0-9]{6,20}$/.test(vin)) throw new UserError("The VIN may contain only letters and digits.");
+  const vinProblem = vinFormatProblem(vin);
+  if (vinProblem) throw new UserError(vinProblem);
   if (year !== null && (!Number.isInteger(year) || year < 2008 || year > new Date().getFullYear() + 1)) throw new UserError("Enter a valid model year.");
 
   await ensureSeeded();
+  if (vin && !input.allowDuplicateVin) {
+    const matches = await findCasesByVin(vin);
+    if (matches.length) {
+      throw new UserError(`${matches.length === 1 ? "A case already exists" : `${matches.length} cases already exist`} for this VIN. Open ${matches.length === 1 ? "it" : "one of them"}, or confirm that you want a new case.`, 409, { duplicates: matches });
+    }
+  }
   const created = now();
   const vehicle: Vehicle = { make, model, year, vin };
   const c: Case = {
@@ -200,13 +259,14 @@ export async function createCase(input: { make: string; model: string; year: str
     caseNumber: `VP-${created.slice(0, 4)}-${String(Math.floor(1000 + Math.random() * 9000))}`,
     synthetic: false,
     vehicle,
+    reference,
     createdAt: created,
     createdBy: actor,
     documents: [],
     claims: [],
     ruleRuns: [],
     reviews: [],
-    events: [event(actor, "case_created", `Case created for ${year ?? ""} ${make} ${model}${vin ? `, VIN ${vin}` : ""}.`.replace("  ", " "))],
+    events: [event(actor, "case_created", `Case created for ${year ?? ""} ${make} ${model}${vin ? `, VIN ${vin}` : ""}${reference ? ` (${reference})` : ""}.`.replace("  ", " "))],
   };
   evaluateRules(c, "case created", "system");
   await getStore().putCase(c);
@@ -246,53 +306,126 @@ export async function addDocument(caseId: string, file: { name: string; data: Bu
   await getStore().updateCase(caseId, (c) => {
     const dup = c.documents.find((d) => d.integrity.sha256 === integrity.sha256);
     c.documents.push(doc);
-    c.events.push(event(actor, "document_added", `${doc.filename} uploaded (${prov.replace(/_/g, " ")}); SHA-256 ${integrity.sha256.slice(0, 12)}…${dup ? ` — identical to ${dup.filename} already on file` : ""}.`));
+    c.events.push(
+      event(actor, "document_added", `${doc.filename} uploaded (${PROVENANCE_LABEL[prov].toLowerCase()}).${dup ? ` It is identical to ${dup.filename}, already on file.` : ""}`, {
+        technical: `SHA-256 ${integrity.sha256.slice(0, 12)}…`,
+      }),
+    );
   });
   return doc;
+}
+
+/**
+ * Corrects where a document came from. The source decides what a document can
+ * verify (only dealer-captured readings are Verified), so the change is audited
+ * and the rules re-run.
+ */
+export async function setDocumentProvenance(caseId: string, docId: string, provenance: string, actor: string) {
+  if (!(PROVENANCES as string[]).includes(provenance)) throw new UserError("Choose where the document came from.");
+  const prov = provenance as Provenance;
+  await ensureSeeded();
+  if (!(await getStore().getCase(caseId))) throw new UserError("Case not found.", 404);
+  return getStore().updateCase(caseId, (c) => {
+    const d = c.documents.find((x) => x.id === docId);
+    if (!d) throw new UserError("Document not found.", 404);
+    if (d.provenance === prov) return;
+    const was = d.provenance;
+    d.provenance = prov;
+    c.events.push(event(actor, "document_source_changed", `${d.filename}: source changed from “${PROVENANCE_LABEL[was]}” to “${PROVENANCE_LABEL[prov]}”.`));
+    evaluateRules(c, `document source changed: ${d.filename}`, "system");
+  });
+}
+
+/** Sets or clears the reviewer's own label for a case (stock number, seller name). */
+export async function setCaseReference(caseId: string, value: unknown, actor: string) {
+  const reference = cleanReference(value);
+  await ensureSeeded();
+  if (!(await getStore().getCase(caseId))) throw new UserError("Case not found.", 404);
+  return getStore().updateCase(caseId, (c) => {
+    if ((c.reference ?? null) === reference) return;
+    c.reference = reference;
+    c.events.push(event(actor, "reference_changed", reference ? `Reference set to “${reference}”.` : "Reference removed."));
+  });
+}
+
+/**
+ * Archives a case: it leaves the dashboard and review queue but keeps its
+ * documents and audit trail, so nothing a reviewer recorded is destroyed.
+ */
+export async function setCaseArchived(caseId: string, archived: boolean, actor: string) {
+  await ensureSeeded();
+  const c0 = await getStore().getCase(caseId);
+  if (!c0) throw new UserError("Case not found.", 404);
+  if (c0.synthetic) throw new UserError("Synthetic demonstration cases cannot be archived. Use Reset demo case instead.");
+  return getStore().updateCase(caseId, (c) => {
+    if (!!c.archivedAt === archived) return;
+    c.archivedAt = archived ? now() : null;
+    c.archivedBy = archived ? actor : null;
+    c.events.push(event(actor, archived ? "case_archived" : "case_restored", archived ? "Case archived. It is hidden from the dashboard and review queue; its documents and history are kept." : "Case restored from the archive."));
+  });
 }
 
 /**
  * Photos and scans have no text layer to check quotes against, so a second
  * engine (PaddleOCR) reads them too and must agree on the identifiers.
  */
-async function secondRead(buf: Buffer, mimeType: string, filename: string, fields: ExtractionFields, grounding: Extraction["grounding"], cache: { ocr?: OcrResult | null }) {
+/** One PaddleOCR read per document, shared by every extraction attempt. */
+interface OcrCache {
+  pending?: Promise<OcrResult | null>;
+  result?: OcrResult | null;
+}
+
+function startOcr(cache: OcrCache, buf: Buffer, mimeType: string, filename: string) {
+  cache.pending ??= runOcr(buf, mimeType, filename).then(
+    (r) => (cache.result = r),
+    (e) => {
+      log({ severity: "WARNING", step: "second_read", outcome: "failed", error: e instanceof Error ? e.message : String(e) });
+      return (cache.result = null);
+    },
+  );
+  return cache.pending;
+}
+
+async function secondRead(buf: Buffer, mimeType: string, filename: string, fields: ExtractionFields, grounding: Extraction["grounding"], cache: OcrCache) {
   if (!ocrConfigured() || grounding === "pdf_text") return null;
-  try {
-    if (cache.ocr === undefined) cache.ocr = await runOcr(buf, mimeType, filename);
-    const disagree = crossCheck(fields, cache.ocr!);
-    log({ step: "second_read", engine: "paddleocr", disagreements: disagree.length });
-    return disagree.length ? ` PaddleOCR disagreed on ${disagree.map((f) => FIELD_LABEL[f].toLowerCase()).join(", ")}; sent to review.` : " PaddleOCR confirmed the identifiers.";
-  } catch (e) {
-    cache.ocr = null;
-    log({ severity: "WARNING", step: "second_read", outcome: "failed", error: e instanceof Error ? e.message : String(e) });
-    return " The second OCR read was unavailable.";
-  }
+  const ocr = await startOcr(cache, buf, mimeType, filename);
+  if (!ocr) return " The second OCR read was unavailable.";
+  const disagree = crossCheck(fields, ocr);
+  log({ step: "second_read", engine: "paddleocr", disagreements: disagree.length });
+  return disagree.length ? ` PaddleOCR disagreed on ${joinList(disagree.map(fieldLabelInline))}; sent to review.` : " PaddleOCR confirmed the identifiers.";
+}
+
+type InkMarkResult = Awaited<ReturnType<typeof runInkMarkCheck>>;
+
+/** Starts the stamp and signature check. It needs no extraction, so it runs while the document is being read. */
+function startInkMarkCheck(buf: Buffer, mimeType: string, filename: string): Promise<InkMarkResult | null> {
+  if (!ocrConfigured()) return Promise.resolve(null);
+  return runInkMarkCheck(buf, mimeType, filename).catch((e) => {
+    log({ severity: "WARNING", step: "ink_marks", outcome: "failed", error: e instanceof Error ? e.message : String(e) });
+    return null;
+  });
 }
 
 /**
  * Stamps, seals and signatures: a visible mark proves nothing, but two marks
  * that are pixel-for-pixel identical were pasted digitally. Runs on the OCR service.
  */
-async function addInkMarkCheck(forensics: DocumentForensics, buf: Buffer, mimeType: string, filename: string) {
-  if (!ocrConfigured()) return;
-  try {
-    const r = await runInkMarkCheck(buf, mimeType, filename);
-    forensics.methods.push("ink_marks");
-    for (const p of r.pages) {
-      for (const g of p.regions) {
-        forensics.indicators.push({
-          code: "duplicated_mark",
-          severity: "potential",
-          method: "ink_marks",
-          page: p.page,
-          message: `Page ${p.page}: two coloured marks (a stamp, seal or signature) are pixel-for-pixel identical (similarity ${g.similarity.toFixed(3)}). A real stamp or signature never prints exactly the same way twice, so one was copied digitally, unless it is a printed logo.`,
-        });
-      }
-      const n = p.marks.length;
-      if (n && !p.regions.length) forensics.indicators.push({ code: "marks_present", severity: "info", method: "ink_marks", page: p.page, message: `Page ${p.page} has ${n} coloured mark${n === 1 ? "" : "s"} (stamp, seal or signature). A visible mark is not proof of authenticity.` });
+async function addInkMarkCheck(forensics: DocumentForensics, check: Promise<InkMarkResult | null>) {
+  const r = await check;
+  if (!r) return;
+  forensics.methods.push("ink_marks");
+  for (const p of r.pages) {
+    for (const g of p.regions) {
+      forensics.indicators.push({
+        code: "duplicated_mark",
+        severity: "potential",
+        method: "ink_marks",
+        page: p.page,
+        message: `Page ${p.page}: two coloured marks (a stamp, seal or signature) are pixel-for-pixel identical (similarity ${g.similarity.toFixed(3)}). A real stamp or signature never prints exactly the same way twice, so one was copied digitally, unless it is a printed logo.`,
+      });
     }
-  } catch (e) {
-    log({ severity: "WARNING", step: "ink_marks", outcome: "failed", error: e instanceof Error ? e.message : String(e) });
+    const n = p.marks.length;
+    if (n && !p.regions.length) forensics.indicators.push({ code: "marks_present", severity: "info", method: "ink_marks", page: p.page, message: `Page ${p.page} has ${n} coloured mark${n === 1 ? "" : "s"} (stamp, seal or signature). A visible mark is not proof of authenticity.` });
   }
 }
 
@@ -322,14 +455,18 @@ async function extractLive(buf: Buffer, mimeType: string, filename: string): Pro
   const cfg = getConfig();
   const forensicsByModel = new Map<string, DocumentForensics>();
   const artifactsByModel = new Map<string, ForensicArtifacts>();
-  const ocrCache: { ocr?: OcrResult | null } = {};
+  const ocrCache: OcrCache = {};
   const notes = new Map<string, string>();
+  // Neither depends on what Gemini reads, so both run alongside the model call
+  // rather than after it. Photos always get the second read; PDFs only when they have no text layer.
+  const inkMarks = startInkMarkCheck(buf, mimeType, filename);
+  if (ocrConfigured() && mimeType !== "application/pdf") void startOcr(ocrCache, buf, mimeType, filename);
   const attempt = async (model: string) => {
     const r = await extractWithGemini(buf, mimeType, cfg, model);
     const g = await groundExtraction(r.fields, buf, mimeType);
     notes.set(model, (await secondRead(buf, mimeType, filename, r.fields, g.grounding, ocrCache)) ?? "");
-    const fx = await analyzeDocument(buf, mimeType, r.fields, artifactsByModel.get(model) ?? artifactsByModel.set(model, {}).get(model)!, ocrText(ocrCache.ocr));
-    if (!forensicsByModel.size) await addInkMarkCheck(fx, buf, mimeType, filename);
+    const fx = await analyzeDocument(buf, mimeType, r.fields, artifactsByModel.get(model) ?? artifactsByModel.set(model, {}).get(model)!, ocrText(ocrCache.result));
+    await addInkMarkCheck(fx, inkMarks);
     forensicsByModel.set(model, fx);
     log({ step: "extract", model, latencyMs: r.usage.latencyMs, attempts: r.usage.attempts, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens, grounding: g.grounding, quotesNotFound: g.notFound });
     const extraction: Extraction = { mode: "vertex-gemini", model, extractedAt: now(), fields: r.fields, warnings: r.warnings, usage: r.usage, grounding: g.grounding };
@@ -390,15 +527,16 @@ export async function processDocument(caseId: string, docId: string, actor: stri
       detail = live.detail;
     } else {
       const sample = await findSampleByHash(doc0.integrity.sha256);
+      const inkMarks = startInkMarkCheck(buf, doc0.mimeType, doc0.filename);
       if (sample) {
         const { fields, warnings } = fixtureExtraction(sample, cfg.minConfidence);
         const g = await groundExtraction(fields, buf, doc0.mimeType);
-        const demoOcr: { ocr?: OcrResult | null } = {};
+        const demoOcr: OcrCache = {};
         const ocrNote = await secondRead(buf, doc0.mimeType, doc0.filename, fields, g.grounding, demoOcr);
         const artifacts: ForensicArtifacts = {};
-        forensics = await analyzeDocument(buf, doc0.mimeType, fields, artifacts, ocrText(demoOcr.ocr));
+        forensics = await analyzeDocument(buf, doc0.mimeType, fields, artifacts, ocrText(demoOcr.result));
         await storeArtifacts(forensics, artifacts, doc0.storageKey);
-        await addInkMarkCheck(forensics, buf, doc0.mimeType, doc0.filename);
+        await addInkMarkCheck(forensics, inkMarks);
         extraction = { mode: "demo-fixture", model: null, extractedAt: now(), fields, warnings, grounding: g.grounding };
         sampleId = sample.id;
         status = "extracted";
@@ -406,7 +544,7 @@ export async function processDocument(caseId: string, docId: string, actor: stri
       } else {
         // Not read, but the signature check needs no extraction.
         forensics = await analyzeDocument(buf, doc0.mimeType, null);
-        await addInkMarkCheck(forensics, buf, doc0.mimeType, doc0.filename);
+        await addInkMarkCheck(forensics, inkMarks);
         status = "not_configured";
         error = "AI extraction is not configured (demo mode). The file was stored and fingerprinted but not read.";
         detail = "Not read: demo mode only reads the built-in synthetic sample documents.";
@@ -428,7 +566,10 @@ export async function processDocument(caseId: string, docId: string, actor: stri
     d.sampleId = sampleId;
     if (forensics) d.forensics = forensics;
     const found = forensics?.indicators.filter((i) => i.severity === "potential").length ?? 0;
-    c.events.push(event(actor, "document_extracted", `${d.filename}: ${detail}${found ? ` Forensic checks found ${found} possible sign${found === 1 ? "" : "s"} of editing.` : ""}`));
+    const outcome = status === "extracted" ? "was read and checked." : status === "not_configured" ? "was stored but not read: demo mode only reads the sample documents." : "could not be read. Try again, or check it yourself.";
+    c.events.push(
+      event(actor, "document_extracted", `${d.filename} ${outcome}${found ? ` ${found} possible sign${found === 1 ? "" : "s"} of editing found.` : ""}`, { technical: detail }),
+    );
     evaluateRules(c, `document processed: ${d.filename}`, "system");
   });
 }
@@ -455,7 +596,7 @@ export async function addReview(caseId: string, findingId: string, input: { reso
       reviewer: actor,
       at: now(),
     });
-    c.events.push(event(actor, "review_recorded", `${f.title}: marked ${input.resolution.replace(/_/g, " ")}. Machine finding (${f.status}) unchanged.`));
+    c.events.push(event(actor, "review_recorded", `${f.title}: marked “${RESOLUTION_LABEL[input.resolution as Resolution]}”. The check's own result (${STATUS_LABEL[f.status]}) is kept.`));
   });
 }
 
@@ -482,7 +623,8 @@ function cleanClaim(input: ClaimInput): ClaimProposal & { source: ClaimSource } 
   if (type === "odometer") stated.unit = s.unit === "mi" ? "mi" : "km";
   else if (type !== "accident_history") stated.unit = "%";
   const err = validateStated(type, stated);
-  if (err) throw new UserError(`${CLAIM_TYPE_LABEL[type]}: ${err}`);
+  // The messages already name the claim type ("Battery health must be…").
+  if (err) throw new UserError(err);
   const sourceText = typeof input.sourceText === "string" && input.sourceText.trim() ? input.sourceText.trim().slice(0, 300) : "";
   const source = (SOURCES as unknown[]).includes(input.source) ? (input.source as ClaimSource) : sourceText ? "seller_listing" : "manual";
   return { type, stated, sourceText, source };

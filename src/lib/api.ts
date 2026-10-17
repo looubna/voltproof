@@ -14,7 +14,7 @@ export function route<C>(handler: Handler<C>) {
     try {
       return await handler(req, ctx, user);
     } catch (e) {
-      if (e instanceof UserError) return NextResponse.json({ error: e.message }, { status: 400 });
+      if (e instanceof UserError) return NextResponse.json({ error: e.message, ...e.details }, { status: e.status });
       console.error(e);
       return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
     }
