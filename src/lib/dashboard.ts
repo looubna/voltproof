@@ -3,24 +3,12 @@ import { caseSummary } from "./derive";
 import { normalizeVin } from "./normalize";
 import type { Case } from "./types";
 
-export const SHOW_OPTIONS = {
-  all: "All cases",
-  awaiting_review: "Needs review",
-  conflicts: "With open conflicts",
-  missing: "With missing evidence",
-  review_complete: "Review complete",
-  processing: "Still being read",
-  no_documents: "No documents yet",
-} as const;
-export type Show = keyof typeof SHOW_OPTIONS;
+// Filter and sort choices. Their labels are translated (dashboard.filters in src/i18n/messages).
+export const SHOWS = ["all", "awaiting_review", "conflicts", "missing", "review_complete", "processing", "no_documents"] as const;
+export type Show = (typeof SHOWS)[number];
 
-export const SORT_OPTIONS = {
-  newest: "Newest first",
-  oldest: "Oldest first",
-  open: "Most open items first",
-  vehicle: "Vehicle A to Z",
-} as const;
-export type Sort = keyof typeof SORT_OPTIONS;
+export const SORTS = ["newest", "oldest", "open", "vehicle"] as const;
+export type Sort = (typeof SORTS)[number];
 
 export interface DashboardQuery {
   q: string;
@@ -37,11 +25,11 @@ export interface DashboardRow {
   sameVin: number;
 }
 
-const pick = <T extends string>(value: unknown, options: Record<T, string>, fallback: T): T => (typeof value === "string" && value in options ? (value as T) : fallback);
+const pick = <T extends string>(value: unknown, options: readonly T[], fallback: T): T => (typeof value === "string" && (options as readonly string[]).includes(value) ? (value as T) : fallback);
 
 export function parseDashboardQuery(sp: Record<string, string | string[] | undefined>): DashboardQuery {
   const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
-  return { q: one(sp.q).trim().slice(0, 80), show: pick(one(sp.show), SHOW_OPTIONS, "all"), sort: pick(one(sp.sort), SORT_OPTIONS, "newest") };
+  return { q: one(sp.q).trim().slice(0, 80), show: pick(one(sp.show), SHOWS, "all"), sort: pick(one(sp.sort), SORTS, "newest") };
 }
 
 export function dashboardRows(cases: Case[]): DashboardRow[] {

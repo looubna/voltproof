@@ -13,7 +13,7 @@ const subscribe = (onChange: () => void) => {
 const isOn = () => document.documentElement.dataset.technical === "on";
 
 /** Shows or hides model names, version numbers, hashes and scores. Remembered in a cookie. */
-export function TechnicalToggle({ initial, tone = "light", className = "" }: { initial: boolean; tone?: "light" | "dark"; className?: string }) {
+export function TechnicalToggle({ initial, tone = "light", className = "", label = "Technical details" }: { initial: boolean; tone?: "light" | "dark"; className?: string; label?: string }) {
   const on = useSyncExternalStore(subscribe, isOn, () => initial);
   const toggle = () => {
     const next = !isOn();
@@ -27,7 +27,7 @@ export function TechnicalToggle({ initial, tone = "light", className = "" }: { i
       <span aria-hidden className={`relative inline-block h-5 w-9 shrink-0 rounded-full transition-colors ${track}`}>
         <span className={`absolute left-0 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${on ? "translate-x-4.5" : "translate-x-0.5"}`} />
       </span>
-      Technical details
+      {label}
     </button>
   );
 }

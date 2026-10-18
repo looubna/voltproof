@@ -299,6 +299,8 @@ export interface AuditEvent {
   detail: string;
   /** Model names, versions, hashes and timings, shown only with "Technical details" on. Older events have none. */
   technical?: string;
+  /** What happened as values (file names, counts, choices), so the history can be shown in any language. Older events have none. */
+  params?: Record<string, string | number>;
 }
 
 export interface Vehicle {

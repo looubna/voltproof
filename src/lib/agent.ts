@@ -9,6 +9,7 @@ import { AGENT_ACTOR } from "./agent-auth";
 import { claimSummaryLine } from "./claims/assess";
 import { getCase, UserError } from "./cases";
 import { currentFindings } from "./derive";
+import { eventText } from "./history";
 import { DOC_TYPE_LABEL } from "./labels";
 import { getStore } from "./storage";
 import type { AgentRun, Case } from "./types";
@@ -114,10 +115,10 @@ const VERDICT = /\b(is|are|was|were)\s+(verified|fraudulent|forged|fake|genuine|
 
 export async function saveAgentRun(caseId: string, body: unknown) {
   const parsed = runSchema.safeParse(body);
-  if (!parsed.success) throw new UserError(`Invalid agent run: ${parsed.error.issues[0]?.path.join(".")} ${parsed.error.issues[0]?.message}`);
+  if (!parsed.success) throw new UserError("agentInvalid", { values: { issue: `${parsed.error.issues[0]?.path.join(".")} ${parsed.error.issues[0]?.message}` } });
   const run = parsed.data;
   const c = await getCase(caseId);
-  if (!c) throw new UserError("Case not found.");
+  if (!c) throw new UserError("caseNotFound");
   const ids = new Set(currentFindings(c).map((f) => f.id));
   const docIds = new Set(c.documents.map((d) => d.id));
   const dropped = [...run.dropped];
@@ -160,12 +161,14 @@ export async function saveAgentRun(caseId: string, body: unknown) {
     x.agentRuns = [...(x.agentRuns ?? []), record].slice(-MAX_RUNS);
     const q = record.sellerQuestions.length;
     const r = record.issuerRequests.length;
+    const params = { questions: q, requests: r };
     x.events.push({
       at: record.finishedAt,
       actor: AGENT_ACTOR,
       type: "agent_run",
-      detail: `Evidence agent drafted ${q} question${q === 1 ? "" : "s"} for the seller and ${r} request${r === 1 ? "" : "s"} to document issuers for you to review. Nothing was sent.`,
+      detail: eventText("agent_run", params, "en")!,
       technical: `${run.model}, agent ${run.agentVersion}, ${run.steps.length} steps`,
+      params,
     });
   });
   return record;
@@ -187,7 +190,7 @@ export function agentConfigured() {
 
 /** Asks the ADK service to investigate a case. The service stores its run through /agent-runs. */
 export async function requestInvestigation(caseId: string, requestedBy: string) {
-  if (!agentConfigured()) throw new UserError("The evidence agent is not configured on this server (AGENT_SERVICE_URL).");
+  if (!agentConfigured()) throw new UserError("agentNotConfigured");
   const base = process.env.AGENT_SERVICE_URL!.replace(/\/$/, "");
   const token = await idToken(base);
   // The agent scales to zero; a cold start can briefly answer 429/503, so retry a few times.
@@ -202,8 +205,8 @@ export async function requestInvestigation(caseId: string, requestedBy: string) 
     if (res.status !== 429 && res.status !== 503) break;
     await new Promise((r) => setTimeout(r, 4000 * attempt));
   }
-  if (!res) throw new UserError("The evidence agent could not be reached.");
+  if (!res) throw new UserError("agentUnreachable");
   const data = (await res.json().catch(() => ({}))) as { error?: string; run_id?: string };
-  if (!res.ok) throw new UserError(`The evidence agent failed: ${data.error ?? `HTTP ${res.status}`}`);
+  if (!res.ok) throw new UserError("agentFailed", { values: { error: data.error ?? `HTTP ${res.status}` } });
   return data;
 }

@@ -9,7 +9,7 @@ export const POST = route<Ctx>(async (req, ctx, user) => {
   const { id } = await ctx.params;
   const form = await req.formData().catch(() => null);
   const file = form?.get("file");
-  if (!form || !(file instanceof File)) throw new UserError("No file received.");
+  if (!form || !(file instanceof File)) throw new UserError("noFile");
   const doc = await addDocument(id, { name: file.name, data: Buffer.from(await file.arrayBuffer()) }, String(form.get("provenance") ?? "unknown"), user);
   return NextResponse.json({ id: doc.id, filename: doc.filename });
 });

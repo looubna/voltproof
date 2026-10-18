@@ -69,10 +69,3 @@ export function caseSummary(c: Case) {
   const stage: CaseStage = c.documents.length === 0 ? "no_documents" : processing ? "processing" : openQueue.length ? "awaiting_review" : "review_complete";
   return { stage, openConflicts, missingEvidence, openReviewItems: openQueue.length, totalReviewItems: queue.length };
 }
-
-export const STAGE_LABEL: Record<CaseStage, string> = {
-  processing: "Processing",
-  awaiting_review: "Awaiting review",
-  review_complete: "Review complete",
-  no_documents: "No documents yet",
-};

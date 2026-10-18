@@ -12,13 +12,16 @@ export function isWellFormedVin(vin: string): boolean {
   return /^[A-HJ-NPR-Z0-9]{17}$/.test(normalizeVin(vin));
 }
 
-/** Why a VIN typed into the case record cannot be right, or null if its shape is valid (or it is empty). */
-export function vinFormatProblem(vin: string): string | null {
+/**
+ * Why a VIN typed into the case record cannot be right, or null if its shape is valid (or it is empty).
+ * A code, so the form and the API can say it in the reader's language (messages: errors.vin*).
+ */
+export function vinFormatIssue(vin: string): { code: "vinChars" | "vinIOQ" | "vinLength"; count?: number } | null {
   const v = normalizeVin(vin);
   if (!v) return null;
-  if (!/^[A-Z0-9]+$/.test(v)) return "A VIN contains only letters and digits.";
-  if (/[IOQ]/.test(v)) return "A VIN never contains the letters I, O or Q (they are too easily confused with 1 and 0). Check the VIN plate.";
-  if (v.length !== 17) return `A VIN has exactly 17 characters; this one has ${v.length}.`;
+  if (!/^[A-Z0-9]+$/.test(v)) return { code: "vinChars" };
+  if (/[IOQ]/.test(v)) return { code: "vinIOQ" };
+  if (v.length !== 17) return { code: "vinLength", count: v.length };
   return null;
 }
 
@@ -66,16 +69,17 @@ export function formatOdometer(o: Odometer): string {
   return `${o.reading.toLocaleString("en-US")} ${o.unit}`;
 }
 
-export type ParsedDate = { ok: true; date: Date; iso: string } | { ok: false; reason: string };
+/** A failure says why ("format" or "calendar") and keeps the value, so a sentence can be written in any language. */
+export type ParsedDate = { ok: true; date: Date; iso: string } | { ok: false; reason: string; code: "format" | "calendar"; value: string };
 
 /** Strict YYYY-MM-DD parsing that rejects impossible dates such as 2026-02-30. */
 export function parseIsoDate(value: string): ParsedDate {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
-  if (!m) return { ok: false, reason: `"${value}" is not in YYYY-MM-DD form` };
+  if (!m) return { ok: false, reason: `"${value}" is not in YYYY-MM-DD form`, code: "format", value };
   const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
   const date = new Date(Date.UTC(y, mo - 1, d));
   if (date.getUTCFullYear() !== y || date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d) {
-    return { ok: false, reason: `"${value}" is not a real calendar date` };
+    return { ok: false, reason: `"${value}" is not a real calendar date`, code: "calendar", value };
   }
   return { ok: true, date, iso: value.trim() };
 }

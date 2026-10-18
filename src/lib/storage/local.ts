@@ -6,6 +6,22 @@ import type { Case, Lead } from "../types";
 import type { Store } from "./types";
 
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Atomically replaces a file. Windows refuses to replace a file that another request has open
+ * for reading (EPERM, EACCES or EBUSY); those locks last milliseconds, so retry briefly.
+ */
+async function replace(from: string, to: string) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await rename(from, to);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (attempt >= 10 || !(code === "EPERM" || code === "EACCES" || code === "EBUSY")) throw e;
+      await new Promise((r) => setTimeout(r, 20 * attempt));
+    }
+  }
+}
 const SAFE_KEY = /^[A-Za-z0-9_\-/.]+$/;
 
 export class LocalStore implements Store {
@@ -45,7 +61,7 @@ export class LocalStore implements Store {
     await mkdir(path.dirname(p), { recursive: true });
     const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(tmp, JSON.stringify(c, null, 2));
-    await rename(tmp, p);
+    await replace(tmp, p);
   }
 
   async updateCase(id: string, mutate: (c: Case) => void) {

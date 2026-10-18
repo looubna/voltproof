@@ -1,60 +1,74 @@
 import { NewCaseForm } from "@/components/client";
 import { PageTitle } from "@/components/ui";
+import { format } from "@/i18n/format";
+import { rich } from "@/i18n/rich";
+import { getI18n } from "@/i18n/server";
 import { requireUser } from "@/lib/auth";
 import { getConfig, typicalReadSeconds } from "@/lib/config";
 import { SAMPLE_CASES } from "@/lib/samples/definitions";
 
 export const dynamic = "force-dynamic";
 
-const NEXT_STEPS = [
-  { n: 1, t: "Vehicle and documents", d: "Enter the car and upload the seller's paperwork (this page)." },
-  { n: 2, t: "The seller's claims", d: "Paste the listing on the case page. Each claim is checked against the documents." },
-  { n: 3, t: "Review and report", d: "Decide on anything flagged, then print or download the report." },
-];
+const NEXT_STEPS = ["vehicle", "claims", "review"] as const;
 
 export default async function NewCasePage() {
   await requireUser();
+  const { m } = await getI18n();
+  const t = m.newCase;
   const cfg = getConfig();
   const maxMb = Math.round(cfg.maxUploadBytes / 1048576);
   return (
     <>
-      <PageTitle eyebrow="New case" title="Start a vehicle review">
-        Add the car and the seller&apos;s paperwork. VoltProof reads each document, checks the facts against each other and shows you what to look into.
+      <PageTitle eyebrow={t.eyebrow} title={t.title}>
+        {t.intro}
       </PageTitle>
-      <ol aria-label="How a review works" className="mb-6 grid gap-2 sm:grid-cols-3">
-        {NEXT_STEPS.map((s) => (
-          <li key={s.n} aria-current={s.n === 1 ? "step" : undefined} className={`flex gap-3 rounded-xl border bg-[#fdfcfa] p-3 ${s.n === 1 ? "border-brand-600 ring-1 ring-brand-600" : "border-line"}`}>
-            <span aria-hidden className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${s.n === 1 ? "bg-brand-600 text-white" : "bg-unknown-bg text-unknown-fg"}`}>
-              {s.n}
+      <ol aria-label={t.stepsLabel} className="mb-6 grid gap-2 sm:grid-cols-3">
+        {NEXT_STEPS.map((key, i) => (
+          <li key={key} aria-current={i === 0 ? "step" : undefined} className={`flex gap-3 rounded-xl border bg-[#fdfcfa] p-3 ${i === 0 ? "border-brand-600 ring-1 ring-brand-600" : "border-line"}`}>
+            <span aria-hidden className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${i === 0 ? "bg-brand-600 text-white" : "bg-unknown-bg text-unknown-fg"}`}>
+              {i + 1}
             </span>
             <div>
-              <p className="text-sm font-semibold">{s.t}</p>
-              <p className="text-xs text-muted">{s.d}</p>
+              <p className="text-sm font-semibold">{t.steps[key].title}</p>
+              <p className="text-xs text-muted">{t.steps[key].body}</p>
             </div>
           </li>
         ))}
       </ol>
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-        <NewCaseForm maxMb={maxMb} typicalSeconds={typicalReadSeconds(cfg)} />
+        <NewCaseForm
+          maxMb={maxMb}
+          typicalSeconds={typicalReadSeconds(cfg)}
+          copy={{
+            form: t.form,
+            upload: {
+              ...m.upload,
+              provenance: m.labels.provenance,
+              remove: m.common.remove,
+              working: m.common.working,
+              updating: m.common.updating,
+              seconds: m.common.seconds,
+              requestFailed: m.errors.requestFailed,
+            },
+            vin: { vinChars: m.errors.vinChars, vinIOQ: m.errors.vinIOQ, vinLength: m.errors.vinLength },
+            optional: m.common.optional,
+          }}
+        />
         <aside className="grid content-start gap-4">
           <div className={`card p-4 text-sm ${cfg.aiMode === "demo" ? "border-amber-200 bg-amber-50/60" : ""}`}>
-            <h2 className="label mb-1">How documents are read</h2>
+            <h2 className="label mb-1">{t.reading.title}</h2>
             {cfg.aiMode === "vertex" ? (
               <p>
-                AI reads each document and notes the page and words behind every value it finds. Fixed rules then compare the values; the AI never decides a status. Reading takes about a minute per
-                document.
-                <span className="tech-detail text-muted"> Model: {cfg.geminiModel} on Vertex AI.</span>
+                {t.reading.live}
+                <span className="tech-detail text-muted">{format(t.reading.model, { model: cfg.geminiModel })}</span>
               </p>
             ) : (
-              <p>
-                <strong>Demo mode.</strong> No AI is connected, so only the sample documents below are read, using values written for the demo. Any other file is stored and fingerprinted but not
-                read.
-              </p>
+              <p>{rich(t.reading.demo, { strong: <strong>{t.reading.demoStrong}</strong> })}</p>
             )}
           </div>
           <div className="card p-4 text-sm">
-            <h2 className="label mb-1">Sample documents to try</h2>
-            <p className="mb-3 text-xs text-muted">Fictional files for practice. Download a set, then upload it here with the car&apos;s details.</p>
+            <h2 className="label mb-1">{t.samples.title}</h2>
+            <p className="mb-3 text-xs text-muted">{t.samples.body}</p>
             {SAMPLE_CASES.map((sc) => (
               <div key={sc.id} className="mb-3 last:mb-0">
                 <div className="text-xs font-semibold">

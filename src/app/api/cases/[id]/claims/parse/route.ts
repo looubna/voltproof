@@ -10,7 +10,7 @@ export const maxDuration = 60;
 export const POST = route(async (req) => {
   const body = (await req.json().catch(() => ({}))) as { text?: unknown };
   const text = typeof body.text === "string" ? body.text.trim() : "";
-  if (text.length < 5) throw new UserError("Paste the seller's listing or message first.");
-  if (text.length > MAX_LISTING_CHARS) throw new UserError(`The text is too long (${MAX_LISTING_CHARS.toLocaleString("en-US")} characters max).`);
+  if (text.length < 5) throw new UserError("listingEmpty");
+  if (text.length > MAX_LISTING_CHARS) throw new UserError("listingTooLong", { values: { max: MAX_LISTING_CHARS } });
   return NextResponse.json(await parseListing(text, getConfig()));
 });
